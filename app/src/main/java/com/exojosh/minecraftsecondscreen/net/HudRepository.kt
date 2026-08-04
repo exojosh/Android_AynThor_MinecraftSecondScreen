@@ -1,0 +1,197 @@
+package com.exojosh.minecraftsecondscreen.net
+
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.util.Base64
+import android.util.Log
+import androidx.compose.runtime.mutableStateMapOf
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import org.json.JSONObject
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.io.PrintWriter
+import java.net.InetSocketAddress
+import java.net.Socket
+import java.net.SocketTimeoutException
+
+private const val TAG = "ThorHudRepository"
+private const val HOST = "127.0.0.1"
+private const val PORT = 48291
+private const val RECONNECT_DELAY_MS = 1500L
+
+data class HotbarSlot(
+    val itemId: String,
+    val count: Int,
+    val damage: Int,
+    val maxDamage: Int,
+    val hasGlint: Boolean
+) {
+    /** null when the item isn't damageable at all -- distinguishes "no bar to draw"
+     *  from "bar at 0%," matching how maxDamage=0 comes through from the mod. */
+    val durabilityFraction: Float?
+        get() = if (maxDamage <= 0) null else 1f - (damage.toFloat() / maxDamage.toFloat())
+}
+
+data class HudState(
+    val health: Float,
+    val maxHealth: Float,
+    val food: Int,
+    val xpLevel: Int,
+    val xpProgress: Float,
+    val armor: Int,
+    val selectedSlot: Int,
+    val hotbar: List<HotbarSlot>
+)
+
+/**
+ * Owns the connection to the mod's loopback socket. Exposes:
+ *  - hudState: null when disconnected (mod not running / game not loaded),
+ *    non-null once we've received at least one snapshot.
+ *  - isConnected: drives whether the Presentation should even be showing --
+ *    this is how "only show the second screen if the mod is present" works,
+ *    with zero mod-detection logic needed on the launcher side.
+ *  - sendCommand(): fire-and-forget a short code (e.g. "R") to the mod.
+ *
+ * Runs its own reconnect loop so the companion app can be started before,
+ * during, or after Minecraft, in any order, and just keeps trying.
+ */
+class HudRepository(private val scope: CoroutineScope) {
+
+    private val _hudState = MutableStateFlow<HudState?>(null)
+    val hudState: StateFlow<HudState?> = _hudState.asStateFlow()
+
+    private val _isConnected = MutableStateFlow(false)
+    val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
+
+    /** Item id -> decoded icon bitmap. mutableStateMapOf so Compose recomposes
+     *  automatically the moment a requested icon arrives -- no manual refresh needed. */
+    val iconCache = mutableStateMapOf<String, Bitmap>()
+    private val requestedIcons = mutableSetOf<String>() // avoid spamming duplicate requests
+
+    @Volatile
+    private var writer: PrintWriter? = null
+
+    fun start() {
+        scope.launch(Dispatchers.IO) { connectionLoop() }
+    }
+
+    /** Returns the cached icon if we already have it; otherwise fires a
+     *  request (once) and returns null -- the UI will recompose once
+     *  iconCache updates. */
+    fun requestIcon(itemId: String): Bitmap? {
+        iconCache[itemId]?.let { return it }
+        if (requestedIcons.add(itemId)) {
+            sendCommand("ICON:$itemId")
+        }
+        return null
+    }
+
+    private suspend fun connectionLoop() {
+        while (true) {
+            try {
+                Socket().use { socket ->
+                    socket.connect(InetSocketAddress(HOST, PORT), 1000)
+                    socket.soTimeout = 5000
+
+                    writer = PrintWriter(socket.getOutputStream(), true)
+                    _isConnected.value = true
+                    Log.i(TAG, "Connected to mod on $HOST:$PORT")
+
+                    val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
+                    var line: String?
+                    while (true) {
+                        line = try {
+                            reader.readLine()
+                        } catch (e: SocketTimeoutException) {
+                            continue
+                        }
+                        if (line == null) break // mod closed the connection
+                        parseAndPublish(line)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Disconnected/failed to connect: ${e.message}")
+            }
+
+            writer = null
+            _isConnected.value = false
+            _hudState.value = null
+            delay(RECONNECT_DELAY_MS)
+        }
+    }
+
+    private fun parseAndPublish(line: String) {
+        try {
+            val json = JSONObject(line)
+            if (json.optString("type") == "icon") {
+                handleIconResponse(json)
+            } else {
+                handleHudState(json)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to parse line: $line", e)
+        }
+    }
+
+    private fun handleIconResponse(json: JSONObject) {
+        val itemId = json.getString("itemId")
+        val base64Png = json.getString("data")
+        val bytes = Base64.decode(base64Png, Base64.DEFAULT)
+        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        if (bitmap != null) {
+            iconCache[itemId] = bitmap
+        } else {
+            Log.w(TAG, "Failed to decode icon bitmap for $itemId")
+        }
+    }
+
+    private fun handleHudState(json: JSONObject) {
+        val hotbarArray = json.getJSONArray("hotbar")
+        val hotbar = buildList {
+            for (i in 0 until hotbarArray.length()) {
+                val slot = hotbarArray.getJSONObject(i)
+                add(
+                    HotbarSlot(
+                        itemId = slot.getString("itemId"),
+                        count = slot.getInt("count"),
+                        damage = slot.getInt("damage"),
+                        maxDamage = slot.getInt("maxDamage"),
+                        hasGlint = slot.getBoolean("hasGlint")
+                    )
+                )
+            }
+        }
+
+        _hudState.value = HudState(
+            health = json.getDouble("health").toFloat(),
+            maxHealth = json.getDouble("maxHealth").toFloat(),
+            food = json.getInt("food"),
+            xpLevel = json.getInt("xpLevel"),
+            xpProgress = json.getDouble("xpProgress").toFloat(),
+            armor = json.getInt("armor"),
+            selectedSlot = json.getInt("selectedSlot"),
+            hotbar = hotbar
+        )
+    }
+
+    /** Sends a short command code to the mod. No-op if not currently connected. */
+    fun sendCommand(code: String) {
+        val currentWriter = writer ?: run {
+            Log.w(TAG, "sendCommand($code) dropped -- not connected")
+            return
+        }
+        scope.launch(Dispatchers.IO) {
+            try {
+                currentWriter.println(code)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to send command $code: ${e.message}")
+            }
+        }
+    }
+}
