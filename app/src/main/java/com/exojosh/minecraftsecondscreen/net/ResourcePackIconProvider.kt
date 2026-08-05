@@ -27,6 +27,9 @@ private const val FONT_SHEET_PATH = "minecraft/textures/font/ascii.png"
 /** Tiled behind the whole HUD. */
 private const val BACKGROUND_PATH = "minecraft/textures/block/dirt.png"
 
+/** The paper sheet a held map is drawn on. 64x64, stretched by the caller. */
+private const val MAP_BACKGROUND_PATH = "minecraft/textures/map/map_background.png"
+
 /**
  * A HUD texture the app needs.
  *
@@ -65,14 +68,21 @@ enum class HudIcon(val assetKey: String, val candidateNames: List<String>) {
     // and the separate selected-slot highlight overlay, 24x23px, meant to be centered on
     // whichever slot is selected.
     HOTBAR_BACKGROUND("hotbar", listOf("hotbar.png", "hotbar.webp")),
-    HOTBAR_SELECTION("hotbar_selection", listOf("hotbar_selection.png", "hotbar_selection.webp"));
+    HOTBAR_SELECTION("hotbar_selection", listOf("hotbar_selection.png", "hotbar_selection.webp")),
+    // The off-hand box, 29x24px, on its own line under the hotbar and flush
+    // with the right edge. The *right* variant, because its 8 blank columns
+    // fall on the left -- right-aligning the left variant would inset the cell
+    // from the screen edge by those 8 columns.
+    HOTBAR_OFFHAND("hotbar_offhand_right", listOf("hotbar_offhand_right.png", "hotbar_offhand_right.webp"));
 
     companion object {
         /** Not under the hud/ sprite dir, so they're socket-or-nothing on the
-         *  fallback path -- see [ResourcePackIconProvider.getFontSheet] and
-         *  [ResourcePackIconProvider.getBackground]. */
+         *  fallback path -- see [ResourcePackIconProvider.getFontSheet],
+         *  [ResourcePackIconProvider.getBackground] and
+         *  [ResourcePackIconProvider.getMapBackground]. */
         const val FONT_ASCII = "font_ascii"
         const val BACKGROUND = "background"
+        const val MAP_BACKGROUND = "map_background"
     }
 }
 
@@ -131,6 +141,12 @@ class ResourcePackIconProvider(
     /** The block texture tiled behind the HUD. */
     fun getBackground(): Bitmap? =
         repository?.assetCache?.get(HudIcon.BACKGROUND) ?: loadAsset(BACKGROUND_PATH)
+
+    /** The paper sheet vanilla draws a held map on, used the same way behind
+     *  the live map tile. Socket-only: it isn't under the hud/ sprite dir, so
+     *  there's no bundled fallback candidate for it. */
+    fun getMapBackground(): Bitmap? =
+        repository?.assetCache?.get(HudIcon.MAP_BACKGROUND) ?: loadAsset(MAP_BACKGROUND_PATH)
 
     private fun loadIconFromAssets(icon: HudIcon): Bitmap? {
         Log.d(TAG, "Test, calling loadIconFromAssets")
