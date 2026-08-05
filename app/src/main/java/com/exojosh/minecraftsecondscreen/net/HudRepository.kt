@@ -55,8 +55,14 @@ data class HudState(
     val xpProgress: Float,
     val armor: Int,
     val selectedSlot: Int,
+    /** Remaining breath in ticks, and its current maximum (300 unenchanted,
+     *  raised by Respiration). Vanilla only shows bubbles while air < maxAir. */
+    val air: Int,
+    val maxAir: Int,
     val hotbar: List<HotbarSlot>
-)
+) {
+    val isDrowning: Boolean get() = maxAir > 0 && air < maxAir
+}
 
 /**
  * Owns the connection to the mod's loopback socket. Exposes:
@@ -238,6 +244,11 @@ class HudRepository(private val scope: CoroutineScope) {
             xpProgress = json.getDouble("xpProgress").toFloat(),
             armor = json.getInt("armor"),
             selectedSlot = json.getInt("selectedSlot"),
+            // Tolerated as optional so a newer app still runs against an older
+            // mod build that predates these fields -- defaults read as "not
+            // drowning", which hides the bubbles.
+            air = json.optInt("air", 0),
+            maxAir = json.optInt("maxAir", 0),
             hotbar = hotbar
         )
     }

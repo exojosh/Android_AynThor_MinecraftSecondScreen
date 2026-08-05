@@ -43,6 +43,15 @@ private const val SPACE_ADVANCE = 4
 private fun Color.toShadowColor(): Color = Color(red / 4f, green / 4f, blue / 4f, alpha)
 
 /**
+ * How text is separated from whatever is behind it. Vanilla picks per
+ * element rather than using one treatment everywhere -- most HUD text gets
+ * [SHADOW], but the XP level number is drawn with a 4-way black [OUTLINE]
+ * (see Bar.drawExperienceLevel) because it sits directly on top of the
+ * bright XP bar, where a single offset shadow wouldn't read.
+ */
+enum class MinecraftTextStyle { SHADOW, OUTLINE, PLAIN }
+
+/**
  * A parsed font sheet: the image plus each codepoint's measured advance.
  * Build via [rememberMinecraftFont] -- measuring walks every pixel of the
  * sheet, which is cheap but pointless to repeat per recomposition.
@@ -109,7 +118,7 @@ fun rememberMinecraftFont(bitmap: Bitmap?): MinecraftFontSheet? =
     remember(bitmap) { bitmap?.let { MinecraftFontSheet.from(it) } }
 
 /**
- * Draws [text] in Minecraft's font, with vanilla's 1px offset drop shadow.
+ * Draws [text] in Minecraft's font.
  *
  * @param pixelSize size of one *font* pixel -- a glyph is 8 * pixelSize tall.
  */
@@ -120,14 +129,23 @@ fun MinecraftText(
     pixelSize: Dp,
     modifier: Modifier = Modifier,
     color: Color = Color.White,
-    shadow: Boolean = true
+    style: MinecraftTextStyle = MinecraftTextStyle.SHADOW,
+    outlineColor: Color = Color.Black
 ) {
-    val shadowPixels = if (shadow) 1 else 0
+    // Both decorated styles push glyphs 1px off the origin in each direction,
+    // so the box grows by 1px for a shadow (one direction) and 2px for an
+    // outline (both), with the text itself sitting inset by the same amount.
+    val pad = when (style) {
+        MinecraftTextStyle.SHADOW -> 1
+        MinecraftTextStyle.OUTLINE -> 2
+        MinecraftTextStyle.PLAIN -> 0
+    }
+    val origin = if (style == MinecraftTextStyle.OUTLINE) 1f else 0f
 
     // The trailing +1 of the last glyph's advance is inter-glyph spacing, not
     // ink, so it isn't part of the drawn width.
-    val widthPixels = (fontSheet.measure(text) - 1).coerceAtLeast(0) + shadowPixels
-    val heightPixels = GLYPH_FONT_PIXELS + shadowPixels
+    val widthPixels = (fontSheet.measure(text) - 1).coerceAtLeast(0) + pad
+    val heightPixels = GLYPH_FONT_PIXELS + pad
 
     Canvas(
         modifier = modifier.size(
@@ -142,9 +160,9 @@ fun MinecraftText(
         val glyphSize = (GLYPH_FONT_PIXELS * scale).roundToInt().coerceAtLeast(1)
         val dstSize = IntSize(glyphSize, glyphSize)
 
-        fun drawPass(offsetFontPixels: Float, passColor: Color) {
-            var penX = offsetFontPixels
-            val y = (offsetFontPixels * scale).roundToInt()
+        fun drawPass(dx: Float, dy: Float, passColor: Color) {
+            var penX = origin + dx
+            val y = ((origin + dy) * scale).roundToInt()
 
             for (char in text) {
                 val code = if (char.code in 0..255) char.code else '?'.code
@@ -161,8 +179,20 @@ fun MinecraftText(
             }
         }
 
-        // Shadow first so the main pass sits on top of it, as vanilla does.
-        if (shadow) drawPass(1f, color.toShadowColor())
-        drawPass(0f, color)
+        // Decoration first, so the main pass lands on top of it as vanilla does.
+        when (style) {
+            MinecraftTextStyle.SHADOW -> drawPass(1f, 1f, color.toShadowColor())
+            MinecraftTextStyle.OUTLINE -> {
+                // Vanilla offsets by one pixel in each cardinal direction only,
+                // not the diagonals -- corners stay open, which is part of the
+                // look. See Bar.drawExperienceLevel.
+                drawPass(1f, 0f, outlineColor)
+                drawPass(-1f, 0f, outlineColor)
+                drawPass(0f, 1f, outlineColor)
+                drawPass(0f, -1f, outlineColor)
+            }
+            MinecraftTextStyle.PLAIN -> Unit
+        }
+        drawPass(0f, 0f, color)
     }
 }

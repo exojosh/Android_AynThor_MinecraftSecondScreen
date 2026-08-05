@@ -34,8 +34,13 @@ enum class HudIcon(val candidateNames: List<String>) {
     FOOD_FULL(listOf("food_full.png", "food/full.webp", "food/full.png")),
     FOOD_HALF(listOf("food_half.png", "food/half.webp", "food/half.png")),
     FOOD_EMPTY(listOf("food_empty.png", "food/empty.webp", "food/empty.png")),
-    EXPERIENCE_BAR_BACKGROUND(listOf("experience_bar_background.png")),
-    EXPERIENCE_BAR_PROGRESS(listOf("experience_bar_progress.png")),
+    EXPERIENCE_BAR_BACKGROUND(listOf("experience_bar_background.png", "experience_bar_background.webp")),
+    EXPERIENCE_BAR_PROGRESS(listOf("experience_bar_progress.png", "experience_bar_progress.webp")),
+    // Breathing bubbles, 9x9 each. air_empty is only drawn during vanilla's
+    // brief pop animation, which BubbleRow doesn't reproduce -- so it isn't
+    // listed here.
+    AIR(listOf("air.png", "air.webp")),
+    AIR_BURSTING(listOf("air_bursting.png", "air_bursting.webp")),
     // Vanilla's hotbar strip -- 182x22px logically (1px border + 9*20px slots + 1px border) --
     // and the separate selected-slot highlight overlay, 24x23px, meant to be centered on
     // whichever slot is selected. Both moved under hud/ in the 1.21.2+ sprite split, same as
