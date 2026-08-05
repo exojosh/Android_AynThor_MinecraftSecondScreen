@@ -3,17 +3,14 @@ package com.exojosh.minecraftsecondscreen
 import android.app.Presentation
 import android.os.Bundle
 import android.view.Display
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.ComposeView
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.exojosh.minecraftsecondscreen.net.HudRepository
-import com.exojosh.minecraftsecondscreen.SecondScreenApp
 import com.exojosh.minecraftsecondscreen.net.ResourcePackIconProvider
-import com.exojosh.minecraftsecondscreen.ui.HudScreen
 
 /**
  * A Presentation is Android's standard mechanism for rendering different
@@ -36,6 +33,12 @@ class SecondScreenPresentation(
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // The bottom screen is a HUD -- it's looked at constantly but never
+        // touched, so Android's idle timer has no reason to think it's in use
+        // and blanks it mid-session. The player is holding the device and
+        // playing the whole time.
+        window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
         val composeView = ComposeView(context).apply {
             setViewTreeLifecycleOwner(activity)

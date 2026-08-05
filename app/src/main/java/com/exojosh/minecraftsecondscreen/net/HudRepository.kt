@@ -47,6 +47,32 @@ data class HotbarSlot(
         get() = if (maxDamage <= 0) null else 1f - (damage.toFloat() / maxDamage.toFloat())
 }
 
+/**
+ * One top-down map tile from the mod, one pixel per block.
+ *
+ * [originX]/[originZ] are the world coordinates of the tile's **top-left**
+ * pixel, sent by the mod rather than derived here -- the app would otherwise
+ * have to reimplement MapRenderer's centring and rounding just to know where
+ * the player marker goes, and drift the moment either side changed.
+ *
+ * [yaw] is Minecraft's convention: degrees, 0 = facing south (+Z), increasing
+ * clockwise.
+ */
+data class MapTile(
+    val bitmap: Bitmap,
+    val originX: Int,
+    val originZ: Int,
+    val playerX: Double,
+    val playerZ: Double,
+    val yaw: Float,
+    val size: Int
+) {
+    /** Player position in tile pixels, fractional so the marker moves smoothly
+     *  between blocks instead of snapping. */
+    val playerPixelX: Float get() = (playerX - originX).toFloat()
+    val playerPixelZ: Float get() = (playerZ - originZ).toFloat()
+}
+
 data class HudState(
     val health: Float,
     val maxHealth: Float,
@@ -86,6 +112,9 @@ class HudRepository(private val scope: CoroutineScope) {
 
     private val _isConnected = MutableStateFlow(false)
     val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
+
+    private val _mapTile = MutableStateFlow<MapTile?>(null)
+    val mapTile: StateFlow<MapTile?> = _mapTile.asStateFlow()
 
     /** Item id -> decoded icon bitmap. mutableStateMapOf so Compose recomposes
      *  automatically the moment a requested icon arrives -- no manual refresh needed. */
@@ -187,6 +216,9 @@ class HudRepository(private val scope: CoroutineScope) {
             writer = null
             _isConnected.value = false
             _hudState.value = null
+            // Drop the map too -- a tile from wherever the player was before
+            // the socket died is worse than showing nothing.
+            _mapTile.value = null
             // Anything we were still waiting on died with the socket. Drop the
             // in-flight bookkeeping (but keep iconCache) so the next
             // connection re-asks immediately instead of waiting out timeouts.
@@ -207,6 +239,7 @@ class HudRepository(private val scope: CoroutineScope) {
             when (json.optString("type")) {
                 "icon" -> handleIconResponse(json)
                 "asset" -> handleAssetResponse(json)
+                "map" -> handleMapResponse(json)
                 else -> handleHudState(json)
             }
         } catch (e: Exception) {
@@ -253,6 +286,42 @@ class HudRepository(private val scope: CoroutineScope) {
     /** Asks the mod to re-send the HUD texture bundle -- call after the
      *  player changes resource packs. New connections get it unprompted. */
     fun requestAssets() = sendCommand("ASSETS")
+
+    /**
+     * A map tile from the mod, rendered with vanilla's own map colours.
+     *
+     * The bitmap is decoded with `inScaled = false` like every other pixel-art
+     * asset here: it's one pixel per block, so any decoder resampling would
+     * blur the terrain before it ever reached the screen.
+     */
+    private fun handleMapResponse(json: JSONObject) {
+        val base64Png = if (json.isNull("data")) null else json.optString("data").takeIf { it.isNotEmpty() }
+        if (base64Png == null) {
+            Log.w(TAG, "Map response had no data")
+            return
+        }
+
+        val bytes = Base64.decode(base64Png, Base64.DEFAULT)
+        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply {
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+            inScaled = false
+        })
+
+        if (bitmap == null) {
+            Log.w(TAG, "Failed to decode map tile")
+            return
+        }
+
+        _mapTile.value = MapTile(
+            bitmap = bitmap,
+            originX = json.getInt("originX"),
+            originZ = json.getInt("originZ"),
+            playerX = json.getDouble("playerX"),
+            playerZ = json.getDouble("playerZ"),
+            yaw = json.getDouble("yaw").toFloat(),
+            size = json.getInt("size")
+        )
+    }
 
     private fun handleIconResponse(json: JSONObject) {
         val itemId = json.getString("itemId")
