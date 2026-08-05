@@ -47,12 +47,22 @@ fun SettingsScreen(settings: HudSettings) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = "Show on screen",
-                color = Color.White,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Bold
-            )
+            Column {
+                Text(
+                    text = "Show on this screen",
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                // Says where a switched-off element goes. Without this the
+                // toggle reads as "hide", and nobody would guess the element
+                // reappears in the game itself.
+                Text(
+                    text = "Anything switched off goes back to the game's HUD on the top screen",
+                    color = Color(0xFF9A9A9A),
+                    fontSize = 11.sp
+                )
+            }
             if (!settings.isDefault) {
                 TextButton(onClick = { settings.resetToDefaults() }) {
                     Text("Reset", color = Color(0xFFBBBBBB))

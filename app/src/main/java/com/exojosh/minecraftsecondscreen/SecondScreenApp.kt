@@ -14,11 +14,13 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -31,6 +33,7 @@ import com.exojosh.minecraftsecondscreen.ui.InputGridScreen
 import com.exojosh.minecraftsecondscreen.ui.MapScreen
 import com.exojosh.minecraftsecondscreen.ui.RepeatingTextureBackground
 import com.exojosh.minecraftsecondscreen.ui.SettingsScreen
+import com.exojosh.minecraftsecondscreen.settings.HudElement
 import com.exojosh.minecraftsecondscreen.settings.rememberHudSettings
 
 /**
@@ -71,6 +74,19 @@ fun SecondScreenApp(
     val isConnected by hudRepository.isConnected.collectAsState()
     var selectedTab by remember { mutableStateOf(SecondScreenTab.HUD) }
     val settings = rememberHudSettings()
+
+    // Anything switched off down here goes back to the game's own HUD on the
+    // top screen, so an element is never simply lost -- between the two
+    // displays the full HUD is always drawn exactly once.
+    //
+    // Keyed on isConnected so a reconnect re-sends: the mod resets to "draw
+    // nothing" when it restarts, and snapshotFlow emits its current value
+    // immediately on collection, which covers both that and every later toggle.
+    LaunchedEffect(hudRepository, isConnected, settings) {
+        if (!isConnected) return@LaunchedEffect
+        snapshotFlow { HudElement.entries.filterNot(settings::isVisible).map { it.key } }
+            .collect(hudRepository::sendGameHudElements)
+    }
 
     // Same source as every other texture: the mod pushes it over the socket,
     // resolved through Minecraft's resource manager, so a resource pack applies

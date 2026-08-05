@@ -293,6 +293,19 @@ class HudRepository(private val scope: CoroutineScope) {
     fun requestAssets() = sendCommand("ASSETS")
 
     /**
+     * Tells the mod which HUD elements the *game* should draw on the main
+     * screen -- the ones the player switched off down here, handed back rather
+     * than simply lost.
+     *
+     * [elementKeys] is the full set every time, not a delta, and is re-sent on
+     * every change and every reconnect. A dropped or reordered delta could
+     * leave the two screens disagreeing about who owns an element, which shows
+     * up as a HUD element drawn on both displays or on neither.
+     */
+    fun sendGameHudElements(elementKeys: Collection<String>) =
+        sendCommand("HUD:" + elementKeys.joinToString(","))
+
+    /**
      * A map tile from the mod, rendered with vanilla's own map colours.
      *
      * The bitmap is decoded with `inScaled = false` like every other pixel-art
