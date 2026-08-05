@@ -70,9 +70,8 @@ private const val STATUS_ICON_COUNT = 10
 private val ABSORPTION_HEART_COLOR = Color(0xFFE8B62F)
 
 /** Swap-hands. Must match a key in `CommandDispatcher.COMMANDS` on the mod
- *  side -- see the input-codes bugfix in TODO.md before renaming anything in
- *  that table. */
-private const val OFFHAND_SWAP_COMMAND = "F"
+ *  side, which names actions rather than keyboard keys. */
+private const val OFFHAND_SWAP_COMMAND = "SWAP"
 
 
 

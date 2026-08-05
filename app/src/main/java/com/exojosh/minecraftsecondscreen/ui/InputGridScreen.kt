@@ -15,15 +15,37 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
 /**
- * Grid of custom keybind buttons. Codes here must match the keys in
- * CommandDispatcher.COMMANDS on the mod side -- add/rename in both places
- * together.
+ * One button on the input grid.
  *
- * Known gap: "L" has no entry in COMMANDS, so it currently logs "Unknown
- * command code" and does nothing. Fixing that belongs with the input-remapping
- * work, which turns both sides into data instead of two hand-maintained lists.
+ * [code] is the wire code and must match a key in `CommandDispatcher.COMMANDS`
+ * on the mod side; [label] is what the player reads. Keeping them separate is
+ * the fix for the bug this replaced: the grid used to render the raw code as
+ * its own label, so a button that sent `"R"` -- which the mod had bound to
+ * swap-hands, vanilla's F -- displayed as an "R" key that did an F key's job.
+ * A code can now be as literal as the mod needs without lying to the player.
  */
-private val COMMAND_CODES = listOf("R", "G", "H", "K", "L")
+private data class InputCommand(val code: String, val label: String)
+
+/**
+ * Grid of custom keybind buttons.
+ *
+ * Codes must match `CommandDispatcher.COMMANDS` on the mod side -- add or
+ * rename in both places together. Until the settings work (item 3 in TODO.md)
+ * turns both sides into data, this is a hand-maintained list and drift between
+ * the two is only caught by pressing the button.
+ *
+ * The mod keeps the old single-letter codes as aliases, so this list moving to
+ * action names doesn't strand a mod build that predates the rename.
+ */
+private val COMMANDS = listOf(
+    InputCommand("INVENTORY", "Inventory"),
+    InputCommand("DROP", "Drop"),
+    InputCommand("SWAP", "Swap"),
+    InputCommand("USE", "Use"),
+    InputCommand("ATTACK", "Attack"),
+    InputCommand("JUMP", "Jump"),
+    InputCommand("SNEAK", "Sneak")
+)
 
 private const val COLUMNS = 3
 private val GRID_SPACING = 12.dp
@@ -36,7 +58,7 @@ fun InputGridScreen(onSendCommand: (String) -> Unit) {
         // when this tab owned the whole screen. It now shares the panel with
         // the status stack above it, and square buttons at this width overflow
         // into a scroll -- so height comes from the space actually available.
-        val rows = (COMMAND_CODES.size + COLUMNS - 1) / COLUMNS
+        val rows = (COMMANDS.size + COLUMNS - 1) / COLUMNS
         val available = maxHeight - GRID_PADDING * 2 - GRID_SPACING * (rows - 1)
         val buttonHeight = (available / rows).coerceAtLeast(48.dp)
 
@@ -46,12 +68,12 @@ fun InputGridScreen(onSendCommand: (String) -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(GRID_SPACING),
             verticalArrangement = Arrangement.spacedBy(GRID_SPACING)
         ) {
-            items(COMMAND_CODES) { code ->
+            items(COMMANDS) { command ->
                 Button(
-                    onClick = { onSendCommand(code) },
+                    onClick = { onSendCommand(command.code) },
                     modifier = Modifier.height(buttonHeight)
                 ) {
-                    Text(code)
+                    Text(command.label)
                 }
             }
         }
