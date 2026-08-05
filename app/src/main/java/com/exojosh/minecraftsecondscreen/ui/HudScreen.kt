@@ -149,10 +149,14 @@ fun HudContent(state: HudState, hudRepository: HudRepository, iconProvider: Reso
             }
         }
 
-        // Health and Hunger share one line
+        // Health and Hunger share one line. Bottom-aligned because absorption
+        // stacks extra heart rows *upward*: the hunger row has to stay level
+        // with the bottom heart row, not get pushed down or centred against a
+        // taller neighbour.
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Bottom
         ) {
             HeartRow(
                 health = state.health,
@@ -257,17 +261,16 @@ fun RepeatingTextureBackground(
     }
 }
 /**
- * Health, with absorption ("golden") hearts, following `renderHealthBar`.
+ * Health, with absorption ("golden") hearts.
  *
- * Vanilla lays out `ceil(maxHealth/2)` normal slots followed by
- * `ceil(absorption/2)` absorption slots in one continuous run, wrapping into
- * stacked rows every 10. Every slot gets a container behind it; slots past
- * the normal count draw an absorbing heart instead of a red one, and the
- * last absorption heart is a half if the amount is odd.
+ * The slot maths lives in [HeartLayout], away from Compose, so it can be unit
+ * tested -- that separation is the point, not incidental tidying. This
+ * composable only turns slots into sprites.
  *
- * This HUD only draws a single row, so the run is capped at 10 slots --
- * enough for 20 health, or fewer normal hearts plus absorption. Vanilla's
- * extra rows aren't reproduced.
+ * Rows stack upward the way vanilla's do: [HeartLayout.compute] returns the
+ * bottom row first, so the list is reversed for the `Column`. Absorption
+ * hearts therefore appear *above* the normal row, and the bottom row stays put
+ * (and stays level with the hunger row beside it).
  */
 @Composable
 private fun HeartRow(
@@ -281,48 +284,38 @@ private fun HeartRow(
     absorbHalfIcon: Bitmap?,
     iconSize: Dp = STATUS_ICON_SIZE
 ) {
-    // Vanilla rounds these up to whole points before deciding what to draw.
-    val healthPoints = ceil(health).toInt()
-    val absorptionPoints = ceil(absorption).toInt()
+    val rows = HeartLayout.compute(health = health, maxHealth = maxHealth, absorption = absorption)
 
-    val healthSlots = ceil(maxHealth.coerceAtLeast(20f) / 2f).toInt()
-    val absorptionSlots = ceil(absorptionPoints / 2f).toInt()
-    val totalSlots = min(healthSlots + absorptionSlots, STATUS_ICON_COUNT)
-
-    Row(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
-        repeat(totalSlots) { slot ->
-            Box(modifier = Modifier.size(iconSize)) {
-                if (containerIcon != null) {
-                    PixelIcon(containerIcon, iconSize)
-                } else {
-                    Canvas(modifier = Modifier.size(iconSize)) { drawHeart(filled = false, half = false) }
-                }
-
-                if (slot >= healthSlots) {
-                    // Absorption slot. `covered` is how much absorption the
-                    // slots before this one already accounted for.
-                    val covered = (slot - healthSlots) * 2
-                    if (covered < absorptionPoints) {
-                        val isHalf = covered + 1 == absorptionPoints
-                        val icon = if (isHalf) absorbHalfIcon else absorbFullIcon
-                        if (icon != null) {
-                            PixelIcon(icon, iconSize)
+    Column(horizontalAlignment = Alignment.Start) {
+        // Bottom-first from the layout, top-first for the Column.
+        rows.asReversed().forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
+                row.forEach { slot ->
+                    Box(modifier = Modifier.size(iconSize)) {
+                        if (containerIcon != null) {
+                            PixelIcon(containerIcon, iconSize)
                         } else {
                             Canvas(modifier = Modifier.size(iconSize)) {
-                                drawHeart(filled = true, half = isHalf, color = ABSORPTION_HEART_COLOR)
+                                drawHeart(filled = false, half = false)
                             }
                         }
-                    }
-                } else {
-                    val covered = slot * 2
-                    if (covered < healthPoints) {
-                        val isHalf = covered + 1 == healthPoints
-                        val icon = if (isHalf) halfIcon else fullIcon
-                        if (icon != null) {
-                            PixelIcon(icon, iconSize)
-                        } else {
-                            Canvas(modifier = Modifier.size(iconSize)) {
-                                drawHeart(filled = true, half = isHalf)
+
+                        if (slot.fill != HeartFill.EMPTY) {
+                            val isHalf = slot.fill == HeartFill.HALF
+                            val icon = when {
+                                slot.absorption && isHalf -> absorbHalfIcon
+                                slot.absorption -> absorbFullIcon
+                                isHalf -> halfIcon
+                                else -> fullIcon
+                            }
+                            if (icon != null) {
+                                PixelIcon(icon, iconSize)
+                            } else {
+                                val fallbackColor =
+                                    if (slot.absorption) ABSORPTION_HEART_COLOR else Color(0xFFD84A3A)
+                                Canvas(modifier = Modifier.size(iconSize)) {
+                                    drawHeart(filled = true, half = isHalf, color = fallbackColor)
+                                }
                             }
                         }
                     }
@@ -342,6 +335,14 @@ private fun PixelIcon(bitmap: Bitmap, size: Dp) {
     )
 }
 
+/**
+ * Armor and hunger: a flat run of half/full slots with no wrapping.
+ *
+ * Sized off [STATUS_ICON_SIZE]/[STATUS_ICON_COUNT] rather than its own
+ * literals. Those constants exist so every status row lands on the same grid
+ * and the rows stack in alignment; hardcoding 25.dp and 10 here quietly opted
+ * this row out of the invariant it was supposed to be following.
+ */
 @Composable
 private fun IconRow(
     currentPoints: Int,
@@ -351,57 +352,37 @@ private fun IconRow(
     emptyIcon: Bitmap?,
     drawFallbackFull: DrawScope.() -> Unit,
     drawFallbackHalf: DrawScope.() -> Unit,
-    drawFallbackEmpty: DrawScope.() -> Unit
+    drawFallbackEmpty: DrawScope.() -> Unit,
+    iconSize: Dp = STATUS_ICON_SIZE
 ) {
-    val totalSlots = min(ceil(maxPoints / 2f).toInt(), 10)
+    val totalSlots = min(ceil(maxPoints / 2f).toInt(), STATUS_ICON_COUNT)
 
     Row(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
         repeat(totalSlots) { index ->
             val pointsForThisSlot = currentPoints - (index * 2)
 
-            Box(modifier = Modifier.size(25.dp)) {
+            Box(modifier = Modifier.size(iconSize)) {
                 if (emptyIcon != null) {
-                    Image(
-                        bitmap = emptyIcon.asImageBitmap(),
-                        contentDescription = null,
-                        filterQuality = FilterQuality.None,
-                        modifier = Modifier.size(25.dp)
-                    )
+                    PixelIcon(emptyIcon, iconSize)
                 } else {
-                    Canvas(modifier = Modifier.size(25.dp)) {
-                        drawFallbackEmpty()
-                    }
+                    Canvas(modifier = Modifier.size(iconSize)) { drawFallbackEmpty() }
                 }
 
-                when {
-                    pointsForThisSlot >= 2 -> {
-                        if (fullIcon != null) {
-                            Image(
-                                bitmap = fullIcon.asImageBitmap(),
-                                contentDescription = null,
-                                filterQuality = FilterQuality.None,
-                                modifier = Modifier.size(25.dp)
-                            )
-                        } else {
-                            Canvas(modifier = Modifier.size(25.dp)) {
-                                drawFallbackFull()
-                            }
-                        }
-                    }
-                    pointsForThisSlot == 1 -> {
-                        if (halfIcon != null) {
-                            Image(
-                                bitmap = halfIcon.asImageBitmap(),
-                                contentDescription = null,
-                                filterQuality = FilterQuality.None,
-                                modifier = Modifier.size(25.dp)
-                            )
-                        } else {
-                            Canvas(modifier = Modifier.size(25.dp)) {
-                                drawFallbackHalf()
-                            }
-                        }
-                    }
+                val overlay: Bitmap? = when {
+                    pointsForThisSlot >= 2 -> fullIcon
+                    pointsForThisSlot == 1 -> halfIcon
+                    else -> null
+                }
+                val fallback: (DrawScope.() -> Unit)? = when {
+                    pointsForThisSlot >= 2 -> drawFallbackFull
+                    pointsForThisSlot == 1 -> drawFallbackHalf
+                    else -> null
+                }
+
+                if (overlay != null) {
+                    PixelIcon(overlay, iconSize)
+                } else if (fallback != null) {
+                    Canvas(modifier = Modifier.size(iconSize)) { fallback() }
                 }
             }
         }
@@ -554,12 +535,7 @@ private fun BubbleRow(
 ) {
     if (maxAir <= 0) return
 
-    // Vanilla's own rounding (InGameHud.getAirBubbles): `full` lags by two
-    // ticks of air so the last bubble visibly bursts before it disappears.
-    val clamped = air.coerceIn(0, maxAir)
-    val full = ceil((clamped - 2).toFloat() * STATUS_ICON_COUNT / maxAir).toInt()
-    val throughBursting = ceil(clamped.toFloat() * STATUS_ICON_COUNT / maxAir).toInt()
-    val hasBursting = throughBursting != full
+    val counts = BubbleLayout.compute(air = air, maxAir = maxAir)
 
     Row(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
         repeat(STATUS_ICON_COUNT) { index ->
@@ -568,8 +544,8 @@ private fun BubbleRow(
             val position = STATUS_ICON_COUNT - index
 
             val bitmap = when {
-                position <= full -> bubbleBitmap
-                hasBursting && position == throughBursting -> burstingBitmap
+                position <= counts.full -> bubbleBitmap
+                counts.hasBursting && position == counts.throughBursting -> burstingBitmap
                 else -> null
             }
 
