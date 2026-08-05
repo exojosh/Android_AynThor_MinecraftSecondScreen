@@ -30,6 +30,8 @@ import com.exojosh.minecraftsecondscreen.ui.HudScreen
 import com.exojosh.minecraftsecondscreen.ui.InputGridScreen
 import com.exojosh.minecraftsecondscreen.ui.MapScreen
 import com.exojosh.minecraftsecondscreen.ui.RepeatingTextureBackground
+import com.exojosh.minecraftsecondscreen.ui.SettingsScreen
+import com.exojosh.minecraftsecondscreen.settings.rememberHudSettings
 
 /**
  * Height reserved at the bottom for the tab strip.
@@ -55,7 +57,8 @@ private val TAB_SELECTED_COLOR = Color(0xFF6750A4)
  */
 enum class SecondScreenTab(val label: String) {
     HUD("HUD"),
-    INPUT("Input")
+    INPUT("Input"),
+    SETTINGS("Settings")
 }
 
 @Composable
@@ -67,6 +70,7 @@ fun SecondScreenApp(
     val mapTile by hudRepository.mapTile.collectAsState()
     val isConnected by hudRepository.isConnected.collectAsState()
     var selectedTab by remember { mutableStateOf(SecondScreenTab.HUD) }
+    val settings = rememberHudSettings()
 
     // Same source as every other texture: the mod pushes it over the socket,
     // resolved through Minecraft's resource manager, so a resource pack applies
@@ -88,6 +92,7 @@ fun SecondScreenApp(
                 HudScreen(
                     state = hudState,
                     hudRepository = hudRepository,
+                    settings = settings,
                     iconProvider = iconProvider
                 )
 
@@ -107,6 +112,8 @@ fun SecondScreenApp(
                         SecondScreenTab.INPUT -> InputGridScreen(
                             onSendCommand = hudRepository::sendCommand
                         )
+
+                        SecondScreenTab.SETTINGS -> SettingsScreen(settings = settings)
                     }
                 }
             }
