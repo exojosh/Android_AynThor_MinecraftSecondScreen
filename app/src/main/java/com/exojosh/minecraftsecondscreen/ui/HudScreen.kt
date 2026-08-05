@@ -57,9 +57,17 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import kotlin.math.roundToInt
 
-/** Matches the 25.dp used by the heart/armor/food rows, so bubbles read as
- *  part of the same stack of status icons. */
-private val BUBBLE_SIZE = 25.dp
+/**
+ * The status rows (armor, hearts, hunger, bubbles) all lay out on this one
+ * grid, so they stack in alignment. Vanilla achieves the same thing with 9px
+ * sprites on an 8px pitch; this HUD draws them edge to edge instead, so the
+ * only thing that matters is that every row uses the same numbers.
+ */
+private val STATUS_ICON_SIZE = 25.dp
+private const val STATUS_ICON_COUNT = 10
+
+/** Fallback colour when no absorbing-heart sprite is available. */
+private val ABSORPTION_HEART_COLOR = Color(0xFFE8B62F)
 
 
 
@@ -136,8 +144,7 @@ fun HudContent(state: HudState, hudRepository: HudRepository, iconProvider: Reso
                     air = state.air,
                     maxAir = state.maxAir,
                     bubbleBitmap = iconProvider?.getIcon(HudIcon.AIR),
-                    burstingBitmap = iconProvider?.getIcon(HudIcon.AIR_BURSTING),
-                    bubbleSize = BUBBLE_SIZE
+                    burstingBitmap = iconProvider?.getIcon(HudIcon.AIR_BURSTING)
                 )
             }
         }
@@ -147,16 +154,15 @@ fun HudContent(state: HudState, hudRepository: HudRepository, iconProvider: Reso
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // Health row
-            IconRow(
-                currentPoints = state.health.toInt(),
-                maxPoints = state.maxHealth.coerceAtLeast(20.0f).toInt(),
+            HeartRow(
+                health = state.health,
+                maxHealth = state.maxHealth,
+                absorption = state.absorption,
                 fullIcon = iconProvider?.getIcon(HudIcon.HEART_FULL),
                 halfIcon = iconProvider?.getIcon(HudIcon.HEART_HALF),
-                emptyIcon = iconProvider?.getIcon(HudIcon.HEART_CONTAINER),
-                drawFallbackFull = { drawHeart(filled = true, half = false) },
-                drawFallbackHalf = { drawHeart(filled = true, half = true) },
-                drawFallbackEmpty = { drawHeart(filled = false, half = false) }
+                containerIcon = iconProvider?.getIcon(HudIcon.HEART_CONTAINER),
+                absorbFullIcon = iconProvider?.getIcon(HudIcon.HEART_ABSORBING_FULL),
+                absorbHalfIcon = iconProvider?.getIcon(HudIcon.HEART_ABSORBING_HALF)
             )
 
             // Hunger row
@@ -250,6 +256,92 @@ fun RepeatingTextureBackground(
         content()
     }
 }
+/**
+ * Health, with absorption ("golden") hearts, following `renderHealthBar`.
+ *
+ * Vanilla lays out `ceil(maxHealth/2)` normal slots followed by
+ * `ceil(absorption/2)` absorption slots in one continuous run, wrapping into
+ * stacked rows every 10. Every slot gets a container behind it; slots past
+ * the normal count draw an absorbing heart instead of a red one, and the
+ * last absorption heart is a half if the amount is odd.
+ *
+ * This HUD only draws a single row, so the run is capped at 10 slots --
+ * enough for 20 health, or fewer normal hearts plus absorption. Vanilla's
+ * extra rows aren't reproduced.
+ */
+@Composable
+private fun HeartRow(
+    health: Float,
+    maxHealth: Float,
+    absorption: Float,
+    fullIcon: Bitmap?,
+    halfIcon: Bitmap?,
+    containerIcon: Bitmap?,
+    absorbFullIcon: Bitmap?,
+    absorbHalfIcon: Bitmap?,
+    iconSize: Dp = STATUS_ICON_SIZE
+) {
+    // Vanilla rounds these up to whole points before deciding what to draw.
+    val healthPoints = ceil(health).toInt()
+    val absorptionPoints = ceil(absorption).toInt()
+
+    val healthSlots = ceil(maxHealth.coerceAtLeast(20f) / 2f).toInt()
+    val absorptionSlots = ceil(absorptionPoints / 2f).toInt()
+    val totalSlots = min(healthSlots + absorptionSlots, STATUS_ICON_COUNT)
+
+    Row(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
+        repeat(totalSlots) { slot ->
+            Box(modifier = Modifier.size(iconSize)) {
+                if (containerIcon != null) {
+                    PixelIcon(containerIcon, iconSize)
+                } else {
+                    Canvas(modifier = Modifier.size(iconSize)) { drawHeart(filled = false, half = false) }
+                }
+
+                if (slot >= healthSlots) {
+                    // Absorption slot. `covered` is how much absorption the
+                    // slots before this one already accounted for.
+                    val covered = (slot - healthSlots) * 2
+                    if (covered < absorptionPoints) {
+                        val isHalf = covered + 1 == absorptionPoints
+                        val icon = if (isHalf) absorbHalfIcon else absorbFullIcon
+                        if (icon != null) {
+                            PixelIcon(icon, iconSize)
+                        } else {
+                            Canvas(modifier = Modifier.size(iconSize)) {
+                                drawHeart(filled = true, half = isHalf, color = ABSORPTION_HEART_COLOR)
+                            }
+                        }
+                    }
+                } else {
+                    val covered = slot * 2
+                    if (covered < healthPoints) {
+                        val isHalf = covered + 1 == healthPoints
+                        val icon = if (isHalf) halfIcon else fullIcon
+                        if (icon != null) {
+                            PixelIcon(icon, iconSize)
+                        } else {
+                            Canvas(modifier = Modifier.size(iconSize)) {
+                                drawHeart(filled = true, half = isHalf)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PixelIcon(bitmap: Bitmap, size: Dp) {
+    Image(
+        bitmap = bitmap.asImageBitmap(),
+        contentDescription = null,
+        filterQuality = FilterQuality.None,
+        modifier = Modifier.size(size)
+    )
+}
+
 @Composable
 private fun IconRow(
     currentPoints: Int,
@@ -430,63 +522,69 @@ private fun XpBar(
 }
 
 /**
- * Vanilla's breathing bubbles: 9x9 sprites on an 8px pitch, so each overlaps
- * its neighbour by a pixel. Ten of them represent the full air supply.
+ * Vanilla's breathing bubbles, following `renderAirBubbles`.
+ *
+ * **Ordering:** vanilla positions bubble `n` (1-based) at
+ * `left - (n - 1) * 8 - 9`, so n=1 is the *rightmost*, and full bubbles are
+ * those with `n <= k`. As air drops, the highest-numbered bubble goes first
+ * -- meaning the row empties from its **left** end inward, not the right.
+ * Laying these out in naive left-to-right index order gets that backwards,
+ * which is why the index is mirrored below.
+ *
+ * **Width:** this uses the same fixed grid as the hunger/health/armor rows
+ * ([STATUS_ICON_COUNT] slots of [STATUS_ICON_SIZE]) rather than vanilla's
+ * 9px-sprite-on-8px-pitch overlap, so the bubble row lines up exactly with
+ * the hunger row it sits above. Vanilla gets that alignment for free because
+ * *all* its status rows share the 8px pitch; this HUD's rows don't overlap,
+ * so bubbles have to follow the same grid to match.
  *
  * Only shown while air is below maximum, matching vanilla -- there's no
- * "full row of bubbles" state on screen when you're not underwater.
- *
- * Vanilla also briefly draws `air_empty` sprites as bubbles pop, timed off a
- * per-bubble delay; that animation isn't reproduced here, so an emptied slot
- * simply renders nothing. Same simplification as the enchant glint.
+ * "full row of bubbles" state on screen when you're not underwater. Vanilla
+ * also briefly draws `air_empty` sprites as bubbles pop, timed off a
+ * per-bubble delay; that animation isn't reproduced, so an emptied slot
+ * renders nothing. Same simplification as the enchant glint.
  */
-private const val BUBBLE_COUNT = 10
-private const val BUBBLE_SPRITE_SIZE = 9f
-private const val BUBBLE_PITCH = 8f
-
 @Composable
 private fun BubbleRow(
     air: Int,
     maxAir: Int,
     bubbleBitmap: Bitmap?,
     burstingBitmap: Bitmap?,
-    bubbleSize: Dp
+    bubbleSize: Dp = STATUS_ICON_SIZE
 ) {
     if (maxAir <= 0) return
 
     // Vanilla's own rounding (InGameHud.getAirBubbles): `full` lags by two
     // ticks of air so the last bubble visibly bursts before it disappears.
     val clamped = air.coerceIn(0, maxAir)
-    val full = ceil((clamped - 2).toFloat() * BUBBLE_COUNT / maxAir).toInt()
-    val throughBursting = ceil(clamped.toFloat() * BUBBLE_COUNT / maxAir).toInt()
+    val full = ceil((clamped - 2).toFloat() * STATUS_ICON_COUNT / maxAir).toInt()
+    val throughBursting = ceil(clamped.toFloat() * STATUS_ICON_COUNT / maxAir).toInt()
     val hasBursting = throughBursting != full
 
-    val unit = bubbleSize / BUBBLE_SPRITE_SIZE
+    Row(horizontalArrangement = Arrangement.spacedBy(0.dp)) {
+        repeat(STATUS_ICON_COUNT) { index ->
+            // Mirror: leftmost cell holds the highest-numbered bubble, so
+            // the row empties from the left as vanilla's does.
+            val position = STATUS_ICON_COUNT - index
 
-    Box(modifier = Modifier.size(width = unit * (BUBBLE_PITCH * BUBBLE_COUNT + 1f), height = bubbleSize)) {
-        for (index in 0 until BUBBLE_COUNT) {
-            val position = index + 1
             val bitmap = when {
                 position <= full -> bubbleBitmap
                 hasBursting && position == throughBursting -> burstingBitmap
                 else -> null
-            } ?: continue
+            }
 
-            Image(
-                bitmap = bitmap.asImageBitmap(),
-                contentDescription = null,
-                contentScale = ContentScale.FillBounds,
-                filterQuality = FilterQuality.None,
-                modifier = Modifier
-                    .offset(x = unit * BUBBLE_PITCH * index)
-                    .size(bubbleSize)
-            )
+            Box(modifier = Modifier.size(bubbleSize)) {
+                if (bitmap != null) PixelIcon(bitmap, bubbleSize)
+            }
         }
     }
 }
 
-private fun DrawScope.drawHeart(filled: Boolean, half: Boolean) {
-    val color = if (filled) Color(0xFFD84A3A) else Color(0xFF4A2A26)
+private fun DrawScope.drawHeart(
+    filled: Boolean,
+    half: Boolean,
+    color: Color = if (filled) Color(0xFFD84A3A) else Color(0xFF4A2A26)
+) {
     val w = size.width
     val h = size.height
     val path = Path().apply {

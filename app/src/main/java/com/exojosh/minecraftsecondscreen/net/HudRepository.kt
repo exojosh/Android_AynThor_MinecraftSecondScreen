@@ -50,6 +50,9 @@ data class HotbarSlot(
 data class HudState(
     val health: Float,
     val maxHealth: Float,
+    /** Extra "golden heart" health on top of [health], from absorption
+     *  effects. Zero most of the time. */
+    val absorption: Float,
     val food: Int,
     val xpLevel: Int,
     val xpProgress: Float,
@@ -296,6 +299,7 @@ class HudRepository(private val scope: CoroutineScope) {
         _hudState.value = HudState(
             health = json.getDouble("health").toFloat(),
             maxHealth = json.getDouble("maxHealth").toFloat(),
+            absorption = json.optDouble("absorption", 0.0).toFloat(),
             food = json.getInt("food"),
             xpLevel = json.getInt("xpLevel"),
             xpProgress = json.getDouble("xpProgress").toFloat(),

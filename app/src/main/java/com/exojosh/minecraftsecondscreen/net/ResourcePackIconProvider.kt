@@ -46,6 +46,8 @@ enum class HudIcon(val assetKey: String, val candidateNames: List<String>) {
     HEART_FULL("heart_full", listOf("heart/full.png", "heart/full.webp", "heart_full.png")),
     HEART_HALF("heart_half", listOf("heart/half.png", "heart/half.webp", "heart_half.png")),
     HEART_CONTAINER("heart_container", listOf("heart/container.png", "heart/container.webp", "heart_container.png")),
+    HEART_ABSORBING_FULL("heart_absorbing_full", listOf("heart/absorbing_full.png", "heart/absorbing_full.webp")),
+    HEART_ABSORBING_HALF("heart_absorbing_half", listOf("heart/absorbing_half.png", "heart/absorbing_half.webp")),
     ARMOR_FULL("armor_full", listOf("armor/full.png", "armor/full.webp", "armor_full.png")),
     ARMOR_HALF("armor_half", listOf("armor/half.png", "armor/half.webp", "armor_half.png")),
     ARMOR_EMPTY("armor_empty", listOf("armor/empty.png", "armor/empty.webp", "armor_empty.png")),
