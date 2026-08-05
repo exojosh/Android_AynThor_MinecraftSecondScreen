@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -44,6 +45,8 @@ import com.exojosh.minecraftsecondscreen.net.HudIcon
 import com.exojosh.minecraftsecondscreen.net.HudState
 import com.exojosh.minecraftsecondscreen.net.ResourcePackIconProvider
 import com.exojosh.minecraftsecondscreen.net.HudRepository
+import com.exojosh.minecraftsecondscreen.settings.HudElement
+import com.exojosh.minecraftsecondscreen.settings.HudSettings
 import kotlin.math.ceil
 import kotlin.math.min
 import androidx.compose.ui.graphics.Brush
@@ -88,6 +91,7 @@ private const val OFFHAND_SWAP_COMMAND = "SWAP"
 fun HudScreen(
     state: HudState?,
     hudRepository: HudRepository,
+    settings: HudSettings,
     iconProvider: ResourcePackIconProvider? = null
 ) {
     if (state == null) {
@@ -102,12 +106,27 @@ fun HudScreen(
         return
     }
 
-    HudContent(state = state, hudRepository = hudRepository, iconProvider = iconProvider)
+    HudContent(
+        state = state,
+        hudRepository = hudRepository,
+        settings = settings,
+        iconProvider = iconProvider
+    )
 }
 
 @Composable
-fun HudContent(state: HudState, hudRepository: HudRepository, iconProvider: ResourcePackIconProvider?) {
+fun HudContent(
+    state: HudState,
+    hudRepository: HudRepository,
+    settings: HudSettings,
+    iconProvider: ResourcePackIconProvider?
+) {
     val fontSheet = rememberMinecraftFont(iconProvider?.getFontSheet())
+
+    val showArmor = settings.isVisible(HudElement.ARMOR)
+    val showBubbles = settings.isVisible(HudElement.BUBBLES)
+    val showHearts = settings.isVisible(HudElement.HEARTS)
+    val showHunger = settings.isVisible(HudElement.HUNGER)
 
     Column(
         modifier = Modifier
@@ -118,31 +137,46 @@ fun HudContent(state: HudState, hudRepository: HudRepository, iconProvider: Reso
     {
         // Armor and breathing bubbles share one line, mirroring vanilla's
         // stacking: armor sits directly above health on the left, bubbles
-        // directly above hunger on the right. The row's height comes from the
-        // armor icons either way, so it doesn't collapse when the player
-        // surfaces and the bubbles disappear.
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            IconRow(
-                currentPoints = state.armor,
-                maxPoints = 20,
-                fullIcon = iconProvider?.getIcon(HudIcon.ARMOR_FULL),
-                halfIcon = iconProvider?.getIcon(HudIcon.ARMOR_HALF),
-                emptyIcon = iconProvider?.getIcon(HudIcon.ARMOR_EMPTY),
-                drawFallbackFull = { drawShield(filled = true, half = false) },
-                drawFallbackHalf = { drawShield(filled = true, half = true) },
-                drawFallbackEmpty = { drawShield(filled = false, half = false) }
-            )
+        // directly above hunger on the right.
+        //
+        // The height is pinned to STATUS_ICON_SIZE rather than inherited from
+        // whichever child happens to be present. It used to come from the
+        // armor icons, which quietly made armor load-bearing for the layout --
+        // fine while it was always drawn, but now that it can be switched off
+        // the row would collapse and re-expand every time the player dipped
+        // underwater, dragging everything below it up and down.
+        if (showArmor || showBubbles) {
+            Row(
+                modifier = Modifier.fillMaxWidth().height(STATUS_ICON_SIZE),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                if (showArmor) {
+                    IconRow(
+                        currentPoints = state.armor,
+                        maxPoints = 20,
+                        fullIcon = iconProvider?.getIcon(HudIcon.ARMOR_FULL),
+                        halfIcon = iconProvider?.getIcon(HudIcon.ARMOR_HALF),
+                        emptyIcon = iconProvider?.getIcon(HudIcon.ARMOR_EMPTY),
+                        drawFallbackFull = { drawShield(filled = true, half = false) },
+                        drawFallbackHalf = { drawShield(filled = true, half = true) },
+                        drawFallbackEmpty = { drawShield(filled = false, half = false) }
+                    )
+                }
 
-            if (state.isDrowning) {
-                BubbleRow(
-                    air = state.air,
-                    maxAir = state.maxAir,
-                    bubbleBitmap = iconProvider?.getIcon(HudIcon.AIR),
-                    burstingBitmap = iconProvider?.getIcon(HudIcon.AIR_BURSTING)
-                )
+                // Holds the gap open so the bubbles stay hard right even when
+                // the armor row beside them is switched off -- SpaceBetween
+                // pushes a lone child to the *start*, which would slide the
+                // bubbles across to the left edge.
+                Spacer(modifier = Modifier.weight(1f))
+
+                if (showBubbles && state.isDrowning) {
+                    BubbleRow(
+                        air = state.air,
+                        maxAir = state.maxAir,
+                        bubbleBitmap = iconProvider?.getIcon(HudIcon.AIR),
+                        burstingBitmap = iconProvider?.getIcon(HudIcon.AIR_BURSTING)
+                    )
+                }
             }
         }
 
@@ -150,61 +184,73 @@ fun HudContent(state: HudState, hudRepository: HudRepository, iconProvider: Reso
         // stacks extra heart rows *upward*: the hunger row has to stay level
         // with the bottom heart row, not get pushed down or centred against a
         // taller neighbour.
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.Bottom
-        ) {
-            HeartRow(
-                health = state.health,
-                maxHealth = state.maxHealth,
-                absorption = state.absorption,
-                fullIcon = iconProvider?.getIcon(HudIcon.HEART_FULL),
-                halfIcon = iconProvider?.getIcon(HudIcon.HEART_HALF),
-                containerIcon = iconProvider?.getIcon(HudIcon.HEART_CONTAINER),
-                absorbFullIcon = iconProvider?.getIcon(HudIcon.HEART_ABSORBING_FULL),
-                absorbHalfIcon = iconProvider?.getIcon(HudIcon.HEART_ABSORBING_HALF)
-            )
+        if (showHearts || showHunger) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Bottom
+            ) {
+                if (showHearts) {
+                    HeartRow(
+                        health = state.health,
+                        maxHealth = state.maxHealth,
+                        absorption = state.absorption,
+                        fullIcon = iconProvider?.getIcon(HudIcon.HEART_FULL),
+                        halfIcon = iconProvider?.getIcon(HudIcon.HEART_HALF),
+                        containerIcon = iconProvider?.getIcon(HudIcon.HEART_CONTAINER),
+                        absorbFullIcon = iconProvider?.getIcon(HudIcon.HEART_ABSORBING_FULL),
+                        absorbHalfIcon = iconProvider?.getIcon(HudIcon.HEART_ABSORBING_HALF)
+                    )
+                }
 
-            // Hunger row
-            IconRow(
-                currentPoints = state.food,
-                maxPoints = 20,
-                fullIcon = iconProvider?.getIcon(HudIcon.FOOD_FULL),
-                halfIcon = iconProvider?.getIcon(HudIcon.FOOD_HALF),
-                emptyIcon = iconProvider?.getIcon(HudIcon.FOOD_EMPTY),
-                drawFallbackFull = { drawDrumstick(filled = true, half = false) },
-                drawFallbackHalf = { drawDrumstick(filled = true, half = true) },
-                drawFallbackEmpty = { drawDrumstick(filled = false, half = false) }
-            )
+                Spacer(modifier = Modifier.weight(1f))
 
-
+                if (showHunger) {
+                    IconRow(
+                        currentPoints = state.food,
+                        maxPoints = 20,
+                        fullIcon = iconProvider?.getIcon(HudIcon.FOOD_FULL),
+                        halfIcon = iconProvider?.getIcon(HudIcon.FOOD_HALF),
+                        emptyIcon = iconProvider?.getIcon(HudIcon.FOOD_EMPTY),
+                        drawFallbackFull = { drawDrumstick(filled = true, half = false) },
+                        drawFallbackHalf = { drawDrumstick(filled = true, half = true) },
+                        drawFallbackEmpty = { drawDrumstick(filled = false, half = false) }
+                    )
+                }
+            }
         }
 
-        XpBar(
-            level = state.xpLevel,
-            progress = state.xpProgress,
-            backgroundBitmap = iconProvider?.getIcon(HudIcon.EXPERIENCE_BAR_BACKGROUND),
-            progressBitmap = iconProvider?.getIcon(HudIcon.EXPERIENCE_BAR_PROGRESS),
-            fontSheet = fontSheet
-        )
+        if (settings.isVisible(HudElement.XP_BAR)) {
+            XpBar(
+                level = state.xpLevel,
+                progress = state.xpProgress,
+                backgroundBitmap = iconProvider?.getIcon(HudIcon.EXPERIENCE_BAR_BACKGROUND),
+                progressBitmap = iconProvider?.getIcon(HudIcon.EXPERIENCE_BAR_PROGRESS),
+                fontSheet = fontSheet
+            )
+        }
 
-        // Hotbar Row, with the off-hand box hanging off its left end.
-        HotbarRow(
-            slots = state.hotbar,
-            selectedIndex = state.selectedSlot,
-            backgroundBitmap = iconProvider?.getIcon(HudIcon.HOTBAR_BACKGROUND),
-            selectionBitmap = iconProvider?.getIcon(HudIcon.HOTBAR_SELECTION),
-            offhandSlot = state.offhand,
-            offhandBitmap = iconProvider?.getIcon(HudIcon.HOTBAR_OFFHAND),
-            fontSheet = fontSheet,
-            onSlotClick = { slot -> hudRepository.sendCommand(slot.toString()) },
-            // Vanilla's swap-hands key. Tapping the box trades the held item
-            // with whatever is in the off-hand, which is also how you put
-            // something *into* an empty off-hand from here.
-            onOffhandClick = { hudRepository.sendCommand(OFFHAND_SWAP_COMMAND) },
-            itemIcon = { itemId -> hudRepository.requestIcon(itemId) }
-        )
+        // Hotbar, with the off-hand box on its own line beneath it. The
+        // off-hand is drawn by HotbarRow, so hiding the hotbar necessarily
+        // hides it too -- said plainly in HudElement.HOTBAR's description
+        // rather than left for the player to discover.
+        if (settings.isVisible(HudElement.HOTBAR)) {
+            HotbarRow(
+                slots = state.hotbar,
+                selectedIndex = state.selectedSlot,
+                backgroundBitmap = iconProvider?.getIcon(HudIcon.HOTBAR_BACKGROUND),
+                selectionBitmap = iconProvider?.getIcon(HudIcon.HOTBAR_SELECTION),
+                offhandSlot = state.offhand.takeIf { settings.isVisible(HudElement.OFFHAND) },
+                offhandBitmap = iconProvider?.getIcon(HudIcon.HOTBAR_OFFHAND),
+                fontSheet = fontSheet,
+                onSlotClick = { slot -> hudRepository.sendCommand(slot.toString()) },
+                // Tapping the box trades the held item with whatever is in the
+                // off-hand, which is also how you put something *into* an empty
+                // off-hand from here.
+                onOffhandClick = { hudRepository.sendCommand(OFFHAND_SWAP_COMMAND) },
+                itemIcon = { itemId -> hudRepository.requestIcon(itemId) }
+            )
+        }
     }
 }
 @Composable
