@@ -51,9 +51,11 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import kotlin.math.roundToInt
 
 /** Matches the 25.dp used by the heart/armor/food rows, so bubbles read as
  *  part of the same stack of status icons. */
@@ -109,33 +111,34 @@ fun HudContent(state: HudState, hudRepository: HudRepository, iconProvider: Reso
         verticalArrangement = Arrangement.SpaceEvenly
     )
     {
-        // Armor row
-        IconRow(
-            currentPoints = state.armor,
-            maxPoints = 20,
-            fullIcon = iconProvider?.getIcon(HudIcon.ARMOR_FULL),
-            halfIcon = iconProvider?.getIcon(HudIcon.ARMOR_HALF),
-            emptyIcon = iconProvider?.getIcon(HudIcon.ARMOR_EMPTY),
-            drawFallbackFull = { drawShield(filled = true, half = false) },
-            drawFallbackHalf = { drawShield(filled = true, half = true) },
-            drawFallbackEmpty = { drawShield(filled = false, half = false) }
-        )
+        // Armor and breathing bubbles share one line, mirroring vanilla's
+        // stacking: armor sits directly above health on the left, bubbles
+        // directly above hunger on the right. The row's height comes from the
+        // armor icons either way, so it doesn't collapse when the player
+        // surfaces and the bubbles disappear.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            IconRow(
+                currentPoints = state.armor,
+                maxPoints = 20,
+                fullIcon = iconProvider?.getIcon(HudIcon.ARMOR_FULL),
+                halfIcon = iconProvider?.getIcon(HudIcon.ARMOR_HALF),
+                emptyIcon = iconProvider?.getIcon(HudIcon.ARMOR_EMPTY),
+                drawFallbackFull = { drawShield(filled = true, half = false) },
+                drawFallbackHalf = { drawShield(filled = true, half = true) },
+                drawFallbackEmpty = { drawShield(filled = false, half = false) }
+            )
 
-        // Breathing bubbles sit directly above hunger, as in vanilla, and are
-        // right-aligned to match the hunger row they sit over. The row keeps
-        // its height when empty so the layout below doesn't jump each time
-        // the player surfaces.
-        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
-            Box(modifier = Modifier.height(BUBBLE_SIZE)) {
-                if (state.isDrowning) {
-                    BubbleRow(
-                        air = state.air,
-                        maxAir = state.maxAir,
-                        bubbleBitmap = iconProvider?.getIcon(HudIcon.AIR),
-                        burstingBitmap = iconProvider?.getIcon(HudIcon.AIR_BURSTING),
-                        bubbleSize = BUBBLE_SIZE
-                    )
-                }
+            if (state.isDrowning) {
+                BubbleRow(
+                    air = state.air,
+                    maxAir = state.maxAir,
+                    bubbleBitmap = iconProvider?.getIcon(HudIcon.AIR),
+                    burstingBitmap = iconProvider?.getIcon(HudIcon.AIR_BURSTING),
+                    bubbleSize = BUBBLE_SIZE
+                )
             }
         }
 
@@ -357,10 +360,7 @@ private fun XpBar(
     }
 
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        // Captured here because the nested Boxes below shadow this scope's
-        // maxWidth with their own.
-        val availableWidth = maxWidth
-        val unit = availableWidth / XP_BAR_WIDTH
+        val unit = maxWidth / XP_BAR_WIDTH
         val barHeight = unit * XP_BAR_HEIGHT
         val fillFraction = (progress.coerceIn(0f, 1f) * XP_BAR_FILL_WIDTH / XP_BAR_WIDTH)
             .coerceAtMost(1f)
@@ -386,22 +386,29 @@ private fun XpBar(
                 )
 
                 if (progressBitmap != null && fillFraction > 0f) {
-                    // Clip to the filled fraction while drawing the sprite at
-                    // full width, reproducing vanilla's sub-rect draw.
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth(fillFraction)
-                            .fillMaxHeight()
-                            .clipToBounds()
-                    ) {
-                        Image(
-                            bitmap = progressBitmap.asImageBitmap(),
-                            contentDescription = null,
-                            contentScale = ContentScale.FillBounds,
-                            filterQuality = FilterQuality.None,
-                            modifier = Modifier
-                                .width(availableWidth)
-                                .fillMaxHeight()
+                    // Crop the *source* to the filled fraction and draw it
+                    // into the same fraction of the destination, so the
+                    // sprite stays at 1:1 scale and its internal segment
+                    // boundaries line up with the unfilled bar behind it.
+                    //
+                    // Doing this by clipping a full-width Image doesn't work:
+                    // Modifier.width() is only a preferred size, so a parent
+                    // narrowed to the fill fraction squeezes the Image and
+                    // ContentScale.FillBounds stretches the bitmap into it.
+                    val progressImage = progressBitmap.asImageBitmap()
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val srcWidth = (progressImage.width * fillFraction)
+                            .roundToInt().coerceIn(1, progressImage.width)
+                        val dstWidth = (size.width * fillFraction)
+                            .roundToInt().coerceAtLeast(1)
+
+                        drawImage(
+                            image = progressImage,
+                            srcOffset = IntOffset.Zero,
+                            srcSize = IntSize(srcWidth, progressImage.height),
+                            dstOffset = IntOffset.Zero,
+                            dstSize = IntSize(dstWidth, size.height.roundToInt()),
+                            filterQuality = FilterQuality.None
                         )
                     }
                 }
