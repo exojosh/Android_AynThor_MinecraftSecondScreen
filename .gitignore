@@ -14,3 +14,8 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Extracted Minecraft textures (HUD sprites, hotbar, bitmap font, block textures).
+# Not redistributable under Mojang's EULA, so they stay local-only.
+# See CLAUDE.md "Required local assets" for what to drop in and where.
+app/src/main/assets/minecraft/

@@ -21,6 +21,22 @@ This app is one half of a two-process system. The other half — the Fabric mod 
 
 Since the second-screen `Presentation` only appears on real dual-screen hardware, `MainActivity` falls back to a minimal status view on the primary screen when no `DISPLAY_CATEGORY_PRESENTATION` display is found — this is the normal (and only practical) way to dev/test on a regular phone or emulator.
 
+## Required local assets
+
+`app/src/main/assets/minecraft/` is **gitignored** — those are textures extracted from Minecraft, which Mojang's EULA doesn't permit redistributing, and this repo is public. The app builds without them but every sprite falls back to a hand-drawn Compose placeholder, so a fresh clone needs them copied in from a game install or resource pack. Paths mirror a resource pack's layout exactly (`assets/minecraft/...` → `app/src/main/assets/minecraft/...`):
+
+```
+minecraft/textures/font/ascii.png                          bitmap font (16x16 grid of glyph cells)
+minecraft/textures/block/dirt.png                          tiled HUD background
+minecraft/textures/gui/sprites/hud/hotbar.webp             182x22 logical, any multiple
+minecraft/textures/gui/sprites/hud/hotbar_selection.png    24x23 logical
+minecraft/textures/gui/sprites/hud/experience_bar_background.png
+minecraft/textures/gui/sprites/hud/experience_bar_progress.png
+minecraft/textures/gui/sprites/hud/{heart,armor,food}/{full,half,container,empty}.{png,webp}
+```
+
+**Filenames are case-sensitive** — Android's asset manager won't find `Hotbar.webp` when the code asks for `hotbar.webp`, and on Windows a case-only rename can leave the Gradle asset merger reporting a bogus "Duplicate resources" error until `app/build/intermediates/assets` is deleted. `HudIcon`'s candidate lists accept either `.png` or `.webp`; see `ResourcePackIconProvider`.
+
 ## Architecture
 
 Full protocol spec (message shapes, field meanings, command codes) is in `thor-hud-handoff.md` §2 — don't re-derive it from source when the doc already has it verified. In short: the app connects to the mod's socket, receives a full HUD snapshot every client tick (~20/sec), renders it, and can request an item's icon on demand (`ICON:<itemId>` → base64 PNG reply) or send back a short command code representing a simulated key/hotbar press.
@@ -31,12 +47,14 @@ Full protocol spec (message shapes, field meanings, command codes) is in `thor-h
 
 - `MainActivity` — finds the Thor's presentation-category external display via `DisplayManager`; owns the single `HudRepository` instance; shows `SecondScreenPresentation` there if found.
 - `SecondScreenPresentation` — `Presentation` subclass hosting a `ComposeView`, with lifecycle/viewmodel/saved-state owners manually wired to the host `Activity` (required because a `Presentation`'s window sits outside the normal Activity view hierarchy).
-- `net/HudRepository` — owns the reconnect loop to the mod's socket (flat 1.5s retry, no backoff), parses inbound lines by presence/absence of `"type":"icon"`, exposes `hudState`/`isConnected` as `StateFlow` and `iconCache` as an unbounded Compose-observable map, and has `sendCommand()`/`requestIcon()` for the reverse direction.
+- `net/HudRepository` — owns the reconnect loop to the mod's socket (flat 1.5s retry, no backoff), parses inbound lines by presence/absence of `"type":"icon"`, exposes `hudState`/`isConnected` as `StateFlow` and `iconCache` as an unbounded Compose-observable map, and has `sendCommand()`/`requestIcon()` for the reverse direction. Icons arriving from the mod are rendered isometrically by the mod itself (see its CLAUDE.md), so nothing here needs to know about item models.
+  - **Icon request retry:** `requestIcon()` is called during composition, so it must tolerate being hit every frame. It tracks `pendingIconRequests` (itemId → timestamp) and `failedIconRequests` rather than a plain "already requested" set. The set version was a real bug: a request that was never answered — because the mod couldn't resolve the item, or because it was sent before the socket came up and `sendCommand()` dropped it — permanently blocked that item from ever being requested again, which is what made icons appear inconsistently. Requests now expire after `ICON_REQUEST_TIMEOUT_MS` and retry; an explicit "no icon" reply from the mod (a `"type":"icon"` line with no `data` field) backs off for `ICON_FAILURE_RETRY_MS` instead of retrying hot; and both maps clear on disconnect so a reconnect re-asks immediately. `requestIcon()` also refuses to mark anything pending while `writer == null`.
 - `net/GameDirectoryAccess` — SAF folder-picker + persisted URI permission, granting read access to ZL2's game directory (must point at shared storage, not `Android/data/...`, which is cross-app-inaccessible on Android).
 - `net/ResourcePackIconProvider` — resolves HUD sprite icons (hearts/armor/food/xp) from the active resource pack (parses `options.txt` for pack order, searches zip/folder packs by the `HudIcon` enum's candidate paths), falling back to bundled assets under `app/src/main/assets/` when a pack doesn't override a sprite — the bundled-fallback logic lives inside this file, not a separate provider class.
 - `SecondScreenApp` — top-level HUD/Input tab switcher shown inside the `Presentation`. Lives directly under the `minecraftsecondscreen` package, not `ui/`.
 - `ui/HudScreen` — renders armor/hearts+hunger/XP bar/hotbar over a tiled background; also defines `RepeatingTextureBackground`, the tiling helper (inline in this file, not a separate file).
-- `ui/HotbarRow` — the 9 hotbar slots: on-demand icon request, stack count, durability bar, static enchant-glint overlay, selected-slot highlight, tap-to-select.
+- `ui/MinecraftFont` — vanilla in-game text. Minecraft's font is a **bitmap sheet, not a TTF**, so matching it means drawing glyphs from `assets/minecraft/textures/font/ascii.png` (a 16×16 grid of cells covering codepoints 0x00–0xFF) rather than shipping a lookalike font file — which also means a resource pack restyling the font works automatically. `MinecraftFontSheet.from()` measures each glyph's advance the way vanilla does (scan the cell right-to-left for the last column with any non-transparent pixel, +1px letter spacing), normalising to vanilla's 8-logical-pixels-per-cell so a hi-res pack sheet lays out identically to the 128×128 default; space is hardcoded to 4 since it has no pixels to measure. `MinecraftText()` draws it with vanilla's 1px offset quarter-brightness drop shadow. Build the sheet via `rememberMinecraftFont()` — measuring walks every pixel, so don't redo it per recomposition. Sizing is in *font pixels* (`pixelSize`), not `sp`.
+- `ui/HotbarRow` — the 9 hotbar slots: on-demand icon request, stack count, durability bar, static enchant-glint overlay, selected-slot highlight, tap-to-select. Takes optional `backgroundBitmap`/`selectionBitmap` params (sourced from `HudIcon.HOTBAR_BACKGROUND`/`HOTBAR_SELECTION`); when null it falls back to the original per-slot bordered boxes. No actual hotbar texture is bundled yet — drop one into `app/src/main/assets/minecraft/textures/gui/sprites/hud/hotbar.png` (and optionally `hotbar_selection.png`) to activate it. The pixel-alignment math is a best-effort approximation of vanilla's proportions (182x22 background, 20px slot pitch, ~24px-wide selection overlay), scaled from whatever bitmap actually gets bundled rather than hardcoded pixel counts — check it visually on-device once a real texture is in place, per the note in `thor-hud-handoff.md` on hotbar pixel alignment.
 - `ui/InputGridScreen` — 3×3 grid of buttons sending fixed command codes.
 
 ## Handoff doc vs. current code

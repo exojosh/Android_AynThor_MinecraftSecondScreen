@@ -19,6 +19,11 @@ private const val TAG = "ResourcePackIcons"
  *  blind, we've been burned by guessed Minecraft internals all session. */
 private const val HUD_SPRITE_DIR = "minecraft/textures/gui/sprites/hud"
 
+/** Minecraft's in-game font is a bitmap sheet, not a font file. Unlike the
+ *  HUD sprites this hasn't moved around across versions -- it's been at
+ *  textures/font/ascii.png for a long time. */
+private const val FONT_SHEET_PATH = "minecraft/textures/font/ascii.png"
+
 enum class HudIcon(val candidateNames: List<String>) {
     HEART_FULL(listOf("heart/full.png", "heart/full.webp", "heart_full.png")),
     HEART_HALF(listOf("heart/half.png", "heart/half.webp", "heart_half.png")),
@@ -30,7 +35,14 @@ enum class HudIcon(val candidateNames: List<String>) {
     FOOD_HALF(listOf("food_half.png", "food/half.webp", "food/half.png")),
     FOOD_EMPTY(listOf("food_empty.png", "food/empty.webp", "food/empty.png")),
     EXPERIENCE_BAR_BACKGROUND(listOf("experience_bar_background.png")),
-    EXPERIENCE_BAR_PROGRESS(listOf("experience_bar_progress.png"))
+    EXPERIENCE_BAR_PROGRESS(listOf("experience_bar_progress.png")),
+    // Vanilla's hotbar strip -- 182x22px logically (1px border + 9*20px slots + 1px border) --
+    // and the separate selected-slot highlight overlay, 24x23px, meant to be centered on
+    // whichever slot is selected. Both moved under hud/ in the 1.21.2+ sprite split, same as
+    // the other entries above. Confirm exact pixel dimensions once a real file is bundled --
+    // HotbarRow's alignment math assumes the 182/22/20/24/23 ratios, not literal pixel counts.
+    HOTBAR_BACKGROUND(listOf("hotbar.png", "hotbar.webp")),
+    HOTBAR_SELECTION(listOf("hotbar_selection.png", "hotbar_selection.webp"))
 }
 
 /**
@@ -70,24 +82,37 @@ class ResourcePackIconProvider(private val context: Context) {
         return loadIconFromAssets(icon)
     }
 
+    /**
+     * The bitmap font sheet backing MinecraftText. Returned as a mutable
+     * ARGB_8888 bitmap because the caller measures glyph widths by reading
+     * pixels, which a hardware-backed bitmap won't allow.
+     */
+    fun getFontSheet(): Bitmap? = loadAsset(FONT_SHEET_PATH)
+
     private fun loadIconFromAssets(icon: HudIcon): Bitmap? {
-        val assetManager = context.assets
         Log.d(TAG, "Test, calling loadIconFromAssets")
         for (candidate in icon.candidateNames) {
-            val assetPath = "$HUD_SPRITE_DIR/$candidate"
-            try {
-                assetManager.open(assetPath).use { inputStream ->
-                    val bitmap = BitmapFactory.decodeStream(inputStream)
-                    if (bitmap != null) {
-                        Log.d(TAG, "SUCCESS: Loaded $assetPath")
-                        return bitmap
-                    }
-                }
-            } catch (e: IOException) {
-                Log.e(TAG, "FAILED to load asset at path: $assetPath")
-            }
+            loadAsset("$HUD_SPRITE_DIR/$candidate")?.let { return it }
         }
         return null
+    }
+
+    private fun loadAsset(assetPath: String): Bitmap? {
+        val options = BitmapFactory.Options().apply {
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+            // Pixel art: never let the decoder resample for screen density.
+            inScaled = false
+        }
+        return try {
+            context.assets.open(assetPath).use { inputStream ->
+                BitmapFactory.decodeStream(inputStream, null, options)?.also {
+                    Log.d(TAG, "SUCCESS: Loaded $assetPath")
+                }
+            }
+        } catch (e: IOException) {
+            Log.e(TAG, "FAILED to load asset at path: $assetPath")
+            null
+        }
     }
 
     private fun resolveActivePacks() {

@@ -156,6 +156,9 @@ fun HudContent(state: HudState, hudRepository: HudRepository, iconProvider: Reso
         HotbarRow(
             slots = state.hotbar,
             selectedIndex = state.selectedSlot,
+            backgroundBitmap = iconProvider?.getIcon(HudIcon.HOTBAR_BACKGROUND),
+            selectionBitmap = iconProvider?.getIcon(HudIcon.HOTBAR_SELECTION),
+            fontSheet = rememberMinecraftFont(iconProvider?.getFontSheet()),
             onSlotClick = { slot -> hudRepository.sendCommand(slot.toString()) },
             itemIcon = { itemId -> hudRepository.requestIcon(itemId) }
         )
