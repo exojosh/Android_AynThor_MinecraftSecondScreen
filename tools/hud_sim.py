@@ -41,8 +41,10 @@ ASSETS = {
     "xp_bar_progress": "textures/gui/sprites/hud/experience_bar_progress.png",
     "hotbar": "textures/gui/sprites/hud/hotbar.png",
     "hotbar_selection": "textures/gui/sprites/hud/hotbar_selection.png",
+    "hotbar_offhand_right": "textures/gui/sprites/hud/hotbar_offhand_right.png",
     "font_ascii": "textures/font/ascii.png",
     "background": "textures/block/dirt.png",
+    "map_background": "textures/map/map_background.png",
 }
 
 
@@ -70,6 +72,11 @@ HOTBAR = [
     EMPTY,
 ]
 
+# Something with a flat item texture, so the sim can actually draw it -- a
+# shield would be the obvious off-hand item but it renders from an entity
+# model and has no textures/item/shield.png to fall back on.
+OFFHAND = slot("minecraft:totem_of_undying", 1)
+
 BASE = {
     "health": 20.0,
     "maxHealth": 20.0,
@@ -82,6 +89,7 @@ BASE = {
     "air": 300,
     "maxAir": 300,
     "hotbar": HOTBAR,
+    "offhand": OFFHAND,
 }
 
 SCENARIOS = {
@@ -97,6 +105,12 @@ SCENARIOS = {
     "drowning-low": {"air": 40, "maxAir": 300},
     "reduced-max": {"health": 6.0, "maxHealth": 12.0},
     "dead": {"health": 0.0},
+    # The off-hand box stays on screen empty -- unlike vanilla, which hides it
+    # -- because it's the tap target for swapping something into it.
+    "offhand-empty": {"offhand": EMPTY},
+    # No "offhand" key at all: what an older mod build sends. The box should
+    # disappear entirely rather than draw an empty one.
+    "offhand-absent": {"offhand": None},
 }
 
 
@@ -123,7 +137,7 @@ def load_item_textures(jar_path):
     tex = {}
     with zipfile.ZipFile(jar_path) as z:
         names = set(z.namelist())
-        for s in HOTBAR:
+        for s in HOTBAR + [OFFHAND]:
             item = s["itemId"]
             if item == "minecraft:air":
                 continue

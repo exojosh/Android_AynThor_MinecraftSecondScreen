@@ -3,9 +3,11 @@ package com.exojosh.minecraftsecondscreen
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -29,14 +31,30 @@ import com.exojosh.minecraftsecondscreen.ui.InputGridScreen
 import com.exojosh.minecraftsecondscreen.ui.MapScreen
 import com.exojosh.minecraftsecondscreen.ui.RepeatingTextureBackground
 
-/** Height reserved at the bottom for the tab strip. */
-private val TAB_STRIP_HEIGHT = 60.dp
+/**
+ * Height reserved at the bottom for the tab strip.
+ *
+ * Kept tight on purpose: everything not spent here goes to the tab's panel,
+ * and the map scales in whole-pixel steps, so ~16dp reclaimed off this strip
+ * can be worth a full step of map size rather than a sliver.
+ */
+private val TAB_STRIP_HEIGHT = 44.dp
 
 private val TAB_SELECTED_COLOR = Color(0xFF6750A4)
 
+/**
+ * What fills the panel *below* the hotbar.
+ *
+ * The status stack (armor, hearts, hunger, XP, hotbar) is not part of this --
+ * it's always on screen, on every tab. Switching tabs only swaps the panel
+ * underneath it, because the whole point of the second screen is that vital
+ * signs stay visible while you do something else with the rest of the space.
+ *
+ * A Settings tab belongs here later; adding it is one entry plus one `when`
+ * branch.
+ */
 enum class SecondScreenTab(val label: String) {
     HUD("HUD"),
-    MAP("Map"),
     INPUT("Input")
 }
 
@@ -61,26 +79,35 @@ fun SecondScreenApp(
 
     val content: @Composable () -> Unit = {
         Box(modifier = Modifier.fillMaxSize()) {
-            Box(
+            Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(bottom = TAB_STRIP_HEIGHT)
             ) {
-                when (selectedTab) {
-                    SecondScreenTab.HUD -> HudScreen(
-                        state = hudState,
-                        hudRepository = hudRepository,
-                        iconProvider = iconProvider
-                    )
+                // Always on top, on every tab. Wraps its own height.
+                HudScreen(
+                    state = hudState,
+                    hudRepository = hudRepository,
+                    iconProvider = iconProvider
+                )
 
-                    SecondScreenTab.MAP -> MapScreen(
-                        tile = mapTile,
-                        isConnected = isConnected
-                    )
+                // Everything left over goes to the tab's panel.
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                ) {
+                    when (selectedTab) {
+                        SecondScreenTab.HUD -> MapScreen(
+                            tile = mapTile,
+                            isConnected = isConnected,
+                            backgroundBitmap = iconProvider.getMapBackground()
+                        )
 
-                    SecondScreenTab.INPUT -> InputGridScreen(
-                        onSendCommand = hudRepository::sendCommand
-                    )
+                        SecondScreenTab.INPUT -> InputGridScreen(
+                            onSendCommand = hudRepository::sendCommand
+                        )
+                    }
                 }
             }
 
@@ -89,7 +116,11 @@ fun SecondScreenApp(
                     .fillMaxWidth()
                     .align(Alignment.BottomCenter)
                     .background(Color.Black.copy(alpha = 0.4f))
-                    .padding(vertical = 6.dp),
+                    // 2dp + a 40dp button + 2dp has to come to TAB_STRIP_HEIGHT
+                    // exactly: the strip is overlaid on the Box, and the panel
+                    // above only avoids it via a bottom padding of that height,
+                    // so a taller strip silently covers the panel's last rows.
+                    .padding(vertical = 2.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -98,6 +129,7 @@ fun SecondScreenApp(
                 SecondScreenTab.entries.forEach { tab ->
                     Button(
                         onClick = { selectedTab = tab },
+                        modifier = Modifier.height(40.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor =
                                 if (selectedTab == tab) TAB_SELECTED_COLOR else Color.Transparent,

@@ -88,7 +88,12 @@ data class HudState(
      *  raised by Respiration). Vanilla only shows bubbles while air < maxAir. */
     val air: Int,
     val maxAir: Int,
-    val hotbar: List<HotbarSlot>
+    val hotbar: List<HotbarSlot>,
+    /** What's in the off-hand, or null against a mod build that predates the
+     *  field. Null hides the off-hand box entirely; an *empty* off-hand comes
+     *  through as a minecraft:air slot and still draws the box, because it's
+     *  the tap target for swapping into. */
+    val offhand: HotbarSlot? = null
 ) {
     val isDrowning: Boolean get() = maxAir > 0 && air < maxAir
 }
@@ -352,16 +357,7 @@ class HudRepository(private val scope: CoroutineScope) {
         val hotbarArray = json.getJSONArray("hotbar")
         val hotbar = buildList {
             for (i in 0 until hotbarArray.length()) {
-                val slot = hotbarArray.getJSONObject(i)
-                add(
-                    HotbarSlot(
-                        itemId = slot.getString("itemId"),
-                        count = slot.getInt("count"),
-                        damage = slot.getInt("damage"),
-                        maxDamage = slot.getInt("maxDamage"),
-                        hasGlint = slot.getBoolean("hasGlint")
-                    )
-                )
+                add(parseSlot(hotbarArray.getJSONObject(i)))
             }
         }
 
@@ -379,9 +375,20 @@ class HudRepository(private val scope: CoroutineScope) {
             // drowning", which hides the bubbles.
             air = json.optInt("air", 0),
             maxAir = json.optInt("maxAir", 0),
-            hotbar = hotbar
+            hotbar = hotbar,
+            // Optional for the same reason: an older mod build doesn't send it,
+            // and null means "don't draw the box" rather than "empty hand".
+            offhand = json.optJSONObject("offhand")?.let(::parseSlot)
         )
     }
+
+    private fun parseSlot(slot: JSONObject) = HotbarSlot(
+        itemId = slot.getString("itemId"),
+        count = slot.getInt("count"),
+        damage = slot.getInt("damage"),
+        maxDamage = slot.getInt("maxDamage"),
+        hasGlint = slot.getBoolean("hasGlint")
+    )
 
     /** Sends a short command code to the mod. No-op if not currently connected. */
     fun sendCommand(code: String) {

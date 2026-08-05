@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -61,8 +62,36 @@ private const val BAR_WIDTH = 13f
 private const val BAR_HEIGHT = 2f
 
 /**
- * The 9 hotbar slots, laid out over vanilla's hotbar sprite and scaled to
- * fill whatever width it's given.
+ * The off-hand box, measured off vanilla's own `hotbar_offhand_right.png`
+ * rather than recalled: 29x24, with its 20x20 cell at (8,2) and the 16x16 item
+ * area at (10,4). The sprite is 29 wide because its *left* 8 columns are empty
+ * -- vanilla's spacer between the box and the hotbar strip it normally sits
+ * beside.
+ *
+ * **The right-hand variant is deliberate, and so is the placement.** Vanilla
+ * hangs this box off the side of the hotbar (left variant for a right-handed
+ * player) at the same height as the strip. Here it goes on its own line
+ * *below* the hotbar, pushed to the right edge, because this is a touch
+ * screen: the hotbar keeps the full screen width it reads best at, and the
+ * off-hand lands under the thumb instead of across the device. Right-aligning
+ * the right variant puts its cell flush with the screen edge, since the blank
+ * columns fall on the inside.
+ *
+ * Vanilla only draws this box when the off-hand actually holds something. The
+ * second screen keeps it on screen empty too, because here it isn't just a
+ * readout -- it's the tap target that swaps the held item into the off-hand.
+ */
+private const val OFFHAND_WIDTH = 29f
+private const val OFFHAND_HEIGHT = 24f
+private const val OFFHAND_CELL_INSET_X = 8f
+private const val OFFHAND_CELL_INSET_Y = 2f
+
+/**
+ * The 9 hotbar slots, laid out over vanilla's hotbar sprite and scaled to fill
+ * whatever width it's given, with the off-hand box on its own line underneath.
+ *
+ * The strip always gets the full width -- [offhandSlot] adds a row rather than
+ * stealing horizontal space, so the slots stay as large as they've ever been.
  *
  * Enchantment glint is a static translucent overlay rather than vanilla's
  * animated diagonal shimmer -- visually communicates "enchanted" with far
@@ -75,25 +104,36 @@ fun HotbarRow(
     selectedIndex: Int,
     backgroundBitmap: Bitmap? = null,
     selectionBitmap: Bitmap? = null,
+    offhandSlot: HotbarSlot? = null,
+    offhandBitmap: Bitmap? = null,
     fontSheet: MinecraftFontSheet? = null,
     modifier: Modifier = Modifier,
     onSlotClick: (Int) -> Unit = {},
+    onOffhandClick: () -> Unit = {},
     itemIcon: (String) -> Bitmap? = { null }
 ) {
     if (backgroundBitmap == null) {
         // No hotbar texture bundled/resolved yet -- fall back to the
         // original per-slot bordered boxes.
-        Row(
-            modifier = modifier,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            slots.forEachIndexed { index, slot ->
+        Column(modifier = modifier, horizontalAlignment = Alignment.End) {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                slots.forEachIndexed { index, slot ->
+                    HotbarSlotView(
+                        slot = slot,
+                        icon = itemIcon(slot.itemId),
+                        isSelected = index == selectedIndex,
+                        fontSheet = fontSheet,
+                        onClick = { onSlotClick(index + 1) }
+                    )
+                }
+            }
+            if (offhandSlot != null) {
                 HotbarSlotView(
-                    slot = slot,
-                    icon = itemIcon(slot.itemId),
-                    isSelected = index == selectedIndex,
+                    slot = offhandSlot,
+                    icon = itemIcon(offhandSlot.itemId),
+                    isSelected = false,
                     fontSheet = fontSheet,
-                    onClick = { onSlotClick(index + 1) }
+                    onClick = onOffhandClick
                 )
             }
         }
@@ -102,59 +142,130 @@ fun HotbarRow(
 
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
         // One logical texture pixel, in dp. Everything below is expressed in
-        // those units so the whole strip scales as one piece.
+        // those units so the strip and the off-hand box scale together.
         val unit: Dp = maxWidth / TEXTURE_WIDTH
 
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(unit * TEXTURE_HEIGHT)
-        ) {
-            Image(
-                bitmap = backgroundBitmap.asImageBitmap(),
-                contentDescription = null,
-                contentScale = ContentScale.FillBounds,
-                filterQuality = FilterQuality.None,
-                modifier = Modifier.fillMaxSize()
-            )
-
-            if (selectionBitmap != null && selectedIndex in slots.indices) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(unit * TEXTURE_HEIGHT)
+            ) {
                 Image(
-                    bitmap = selectionBitmap.asImageBitmap(),
+                    bitmap = backgroundBitmap.asImageBitmap(),
                     contentDescription = null,
                     contentScale = ContentScale.FillBounds,
                     filterQuality = FilterQuality.None,
-                    modifier = Modifier
-                        .offset(
-                            x = unit * (SELECTION_OFFSET + SLOT_PITCH * selectedIndex),
-                            y = unit * SELECTION_OFFSET
-                        )
-                        .size(width = unit * SELECTION_WIDTH, height = unit * SELECTION_HEIGHT)
+                    modifier = Modifier.fillMaxSize()
                 )
-            }
 
-            slots.forEachIndexed { index, slot ->
-                // Tap target is the full 20x20 cell, not just the 16x16 icon.
-                Box(
-                    modifier = Modifier
-                        .offset(
-                            x = unit * (SLOT_INSET + SLOT_PITCH * index),
-                            y = unit * SLOT_INSET
-                        )
-                        .size(unit * SLOT_PITCH)
-                        .clickable { onSlotClick(index + 1) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Box(modifier = Modifier.size(unit * ICON_SIZE)) {
-                        HotbarSlotContent(
-                            slot = slot,
-                            icon = itemIcon(slot.itemId),
-                            fontSheet = fontSheet,
-                            unit = unit
-                        )
+                if (selectionBitmap != null && selectedIndex in slots.indices) {
+                    Image(
+                        bitmap = selectionBitmap.asImageBitmap(),
+                        contentDescription = null,
+                        contentScale = ContentScale.FillBounds,
+                        filterQuality = FilterQuality.None,
+                        modifier = Modifier
+                            .offset(
+                                x = unit * (SELECTION_OFFSET + SLOT_PITCH * selectedIndex),
+                                y = unit * SELECTION_OFFSET
+                            )
+                            .size(width = unit * SELECTION_WIDTH, height = unit * SELECTION_HEIGHT)
+                    )
+                }
+
+                slots.forEachIndexed { index, slot ->
+                    // Tap target is the full 20x20 cell, not just the 16x16 icon.
+                    Box(
+                        modifier = Modifier
+                            .offset(
+                                x = unit * (SLOT_INSET + SLOT_PITCH * index),
+                                y = unit * SLOT_INSET
+                            )
+                            .size(unit * SLOT_PITCH)
+                            .clickable { onSlotClick(index + 1) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(modifier = Modifier.size(unit * ICON_SIZE)) {
+                            HotbarSlotContent(
+                                slot = slot,
+                                icon = itemIcon(slot.itemId),
+                                fontSheet = fontSheet,
+                                unit = unit
+                            )
+                        }
                     }
                 }
             }
+
+            // Own line, hard right. The off-hand box is drawn whenever the mod
+            // reports an off-hand at all, sprite or no sprite -- without one it
+            // falls back to a plain bordered cell in the same footprint, so the
+            // tap target never silently vanishes.
+            if (offhandSlot != null) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.End)
+                        .size(width = unit * OFFHAND_WIDTH, height = unit * OFFHAND_HEIGHT)
+                ) {
+                    OffhandBox(
+                        slot = offhandSlot,
+                        icon = itemIcon(offhandSlot.itemId),
+                        boxBitmap = offhandBitmap,
+                        fontSheet = fontSheet,
+                        unit = unit,
+                        onClick = onOffhandClick
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The off-hand box, filling the [Box] it's given (29x24 logical pixels).
+ *
+ * Tapping it sends swap-hands, so the currently held item and whatever is in
+ * the off-hand trade places -- which is also the only way to *fill* an empty
+ * off-hand from the second screen, hence drawing the box even when it's empty.
+ */
+@Composable
+private fun BoxScope.OffhandBox(
+    slot: HotbarSlot,
+    icon: Bitmap?,
+    boxBitmap: Bitmap?,
+    fontSheet: MinecraftFontSheet?,
+    unit: Dp,
+    onClick: () -> Unit
+) {
+    if (boxBitmap != null) {
+        Image(
+            bitmap = boxBitmap.asImageBitmap(),
+            contentDescription = null,
+            contentScale = ContentScale.FillBounds,
+            filterQuality = FilterQuality.None,
+            modifier = Modifier.fillMaxSize()
+        )
+    }
+
+    Box(
+        modifier = Modifier
+            .offset(x = unit * OFFHAND_CELL_INSET_X, y = unit * OFFHAND_CELL_INSET_Y)
+            .size(unit * SLOT_PITCH)
+            .then(
+                // Only when there's no sprite -- otherwise the texture already
+                // draws the cell and a border on top of it would double up.
+                if (boxBitmap == null) {
+                    Modifier.border(width = 1.dp, color = Color(0xFF555555))
+                } else {
+                    Modifier
+                }
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(modifier = Modifier.size(unit * ICON_SIZE)) {
+            HotbarSlotContent(slot = slot, icon = icon, fontSheet = fontSheet, unit = unit)
         }
     }
 }

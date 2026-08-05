@@ -69,8 +69,22 @@ private const val STATUS_ICON_COUNT = 10
 /** Fallback colour when no absorbing-heart sprite is available. */
 private val ABSORPTION_HEART_COLOR = Color(0xFFE8B62F)
 
+/** Swap-hands. Must match a key in `CommandDispatcher.COMMANDS` on the mod
+ *  side -- see the input-codes bugfix in TODO.md before renaming anything in
+ *  that table. */
+private const val OFFHAND_SWAP_COMMAND = "F"
 
 
+
+/**
+ * The player's vital signs: armor/bubbles, hearts/hunger, XP bar, hotbar.
+ *
+ * Sits at the top of every tab and **wraps its own height** -- the tab's own
+ * panel gets whatever is left underneath. It deliberately doesn't paint a
+ * background or fill the screen: [com.exojosh.minecraftsecondscreen.SecondScreenApp]
+ * owns the tiled backdrop for the whole window, and having this fill too meant
+ * the dirt was drawn twice, once over the other.
+ */
 @Composable
 fun HudScreen(
     state: HudState?,
@@ -78,34 +92,18 @@ fun HudScreen(
     iconProvider: ResourcePackIconProvider? = null
 ) {
     if (state == null) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("Waiting for game data...")
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(24.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text("Waiting for game data...", color = Color(0xFFBBBBBB))
         }
         return
     }
 
-    // Comes from the mod over the socket (so it matches the active resource
-    // pack), falling back to a bundled copy.
-    val dirtBitmap = iconProvider?.getBackground()?.asImageBitmap()
-
-    if (dirtBitmap != null) {
-        RepeatingTextureBackground(
-            texture = dirtBitmap,
-            modifier = Modifier.fillMaxSize()
-        ) {
-            HudContent(state = state, hudRepository = hudRepository, iconProvider = iconProvider)
-        }
-    } else {
-        // Fallback with a dark charcoal background if asset fails to load
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color(0xFF222222)),
-            contentAlignment = Alignment.Center
-        ) {
-            HudContent(state = state, hudRepository = hudRepository, iconProvider = iconProvider)
-        }
-    }
+    HudContent(state = state, hudRepository = hudRepository, iconProvider = iconProvider)
 }
 
 @Composable
@@ -192,14 +190,20 @@ fun HudContent(state: HudState, hudRepository: HudRepository, iconProvider: Reso
             fontSheet = fontSheet
         )
 
-        // Hotbar Row
+        // Hotbar Row, with the off-hand box hanging off its left end.
         HotbarRow(
             slots = state.hotbar,
             selectedIndex = state.selectedSlot,
             backgroundBitmap = iconProvider?.getIcon(HudIcon.HOTBAR_BACKGROUND),
             selectionBitmap = iconProvider?.getIcon(HudIcon.HOTBAR_SELECTION),
+            offhandSlot = state.offhand,
+            offhandBitmap = iconProvider?.getIcon(HudIcon.HOTBAR_OFFHAND),
             fontSheet = fontSheet,
             onSlotClick = { slot -> hudRepository.sendCommand(slot.toString()) },
+            // Vanilla's swap-hands key. Tapping the box trades the held item
+            // with whatever is in the off-hand, which is also how you put
+            // something *into* an empty off-hand from here.
+            onOffhandClick = { hudRepository.sendCommand(OFFHAND_SWAP_COMMAND) },
             itemIcon = { itemId -> hudRepository.requestIcon(itemId) }
         )
     }
