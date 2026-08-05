@@ -136,6 +136,53 @@ def load_item_textures(jar_path):
     return tex
 
 
+MAP_SIZE = 128
+
+
+def fake_map_png():
+    """A synthetic map tile, so the map tab can be exercised without a world.
+
+    Deliberately not a real terrain render -- it's a coarse blob pattern with a
+    river and a beach, enough to check scaling, whole-pixel snapping, marker
+    placement and rotation. Judging actual map fidelity needs the real mod.
+    """
+    import struct
+    import zlib
+
+    def px(x, z):
+        # Rough continent shape from a couple of offset sine ridges.
+        import math
+        h = (math.sin(x / 19.0) * math.cos(z / 23.0)
+             + 0.5 * math.sin((x + z) / 11.0))
+        checker = (x + z) & 1
+        if h < -0.45:                       # water, depth-shaded like vanilla
+            base = (64, 64, 255)
+            f = (-h - 0.45) * 3.0 + checker * 0.2
+            scale = 255 if f < 0.5 else (180 if f > 0.9 else 220)
+        elif h < -0.30:                     # sand
+            base, scale = (247, 233, 163), 220 if checker else 255
+        elif h < 0.55:                      # grass
+            base, scale = (127, 178, 56), 220 if checker else 255
+        else:                               # stone
+            base, scale = (112, 112, 112), 180 if checker else 220
+        return bytes(min(255, c * scale // 255) for c in base) + b"\xff"
+
+    raw = b"".join(
+        b"\x00" + b"".join(px(x, z) for x in range(MAP_SIZE))
+        for z in range(MAP_SIZE)
+    )
+
+    def chunk(tag, data):
+        return (struct.pack(">I", len(data)) + tag + data
+                + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF))
+
+    png = (b"\x89PNG\r\n\x1a\n"
+           + chunk(b"IHDR", struct.pack(">IIBBBBB", MAP_SIZE, MAP_SIZE, 8, 6, 0, 0, 0))
+           + chunk(b"IDAT", zlib.compress(raw, 9))
+           + chunk(b"IEND", b""))
+    return base64.b64encode(png).decode("ascii")
+
+
 def handle(conn, addr, assets, item_tex, state):
     print(f"[sim] client connected: {addr}")
     send_lock = threading.Lock()
@@ -177,9 +224,30 @@ def handle(conn, addr, assets, item_tex, state):
 
     threading.Thread(target=reader, daemon=True).start()
 
+    map_png = fake_map_png()
+    yaw = 0.0
+    walk = 0.0
+
     try:
         while not stop.is_set():
             send(state)
+
+            # Drift the player and spin the yaw so the marker is visibly live
+            # and the tile origin actually moves, which is what catches
+            # origin/marker mismatches.
+            walk += 0.6
+            yaw = (yaw + 7.0) % 360.0
+            origin_x, origin_z = -64, -64
+            send({
+                "type": "map",
+                "data": map_png,
+                "originX": origin_x,
+                "originZ": origin_z,
+                "playerX": origin_x + MAP_SIZE / 2 + (walk % 20) - 10,
+                "playerZ": origin_z + MAP_SIZE / 2,
+                "yaw": yaw,
+                "size": MAP_SIZE,
+            })
             time.sleep(0.5)
     except OSError:
         pass
