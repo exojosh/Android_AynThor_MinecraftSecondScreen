@@ -40,7 +40,10 @@ private val MARKER_OUTLINE = Color.Black
  * 142 across. Both numbers are reproduced here rather than eyeballed, so the
  * proportions match a map held in game at any scale.
  */
-private const val MAP_BORDER = 7
+private const val MAP_BORDER = 7f
+
+/** Map plus both borders: vanilla's sheet is 142 across for 128 of map. */
+private const val MAP_SHEET = 128f + MAP_BORDER * 2f
 
 /**
  * The paper field of vanilla's `map_background.png` (it's a 3-colour indexed
@@ -56,23 +59,32 @@ private val MAP_PAPER_FALLBACK = Color(0xFFD6BE96)
  * there's no colour work here -- this scales it up, lays it on the paper sheet
  * a held map is drawn on, and puts a marker on it.
  *
- * Scaling is snapped to whole pixels and drawn with [FilterQuality.None]: the
- * tile is one pixel per block, so any smoothing turns terrain into mush. Same
- * rule as every other pixel-art surface in this app. The paper underneath is a
- * 64x64 sprite stretched to 142 and is the one thing here that *doesn't* land
- * on whole pixels -- vanilla stretches it the same way, and it's a soft
- * gradient, so there's no pixel grid to preserve.
+ * **The sheet fills the panel and is pinned to its top**, so the paper's top
+ * edge meets the bottom of the hotbar and the map is as large as the space
+ * allows. It's square, and the panel is far wider than it is tall, so height
+ * is what binds; the leftover width is split either side.
  *
- * The paper is also load-bearing beyond decoration: [com.exojosh.minecraftsecondscreen.net.MapTile]
- * pixels for unloaded chunks arrive fully transparent, so they now read as
- * blank paper -- exactly what an unexplored region looks like on a real map --
+ * That means the map scale is **not** snapped to whole pixels, which reverses
+ * an earlier decision worth recording rather than silently flipping back. The
+ * argument for snapping was real: the tile is one pixel per block, so a
+ * fractional scale gives neighbouring blocks different pixel widths, and which
+ * blocks get the extra pixel changes as the tile re-centres -- the map
+ * shimmers as you walk. The argument against is that snapping quantises the
+ * map to integer multiples of 128px, so it routinely threw away 20-30% of the
+ * panel to land on a step, and a map that small is a worse minimap than a
+ * slightly unstable one. Drawing stays on [FilterQuality.None] regardless:
+ * smoothing would turn terrain to mush, which is the far worse artifact.
+ *
+ * The paper is load-bearing beyond decoration: [com.exojosh.minecraftsecondscreen.net.MapTile]
+ * pixels for unloaded chunks arrive fully transparent, so they read as blank
+ * paper -- exactly what an unexplored region looks like on a real map --
  * instead of as a hole showing the dirt backdrop.
  */
 @Composable
 fun MapScreen(tile: MapTile?, isConnected: Boolean, backgroundBitmap: Bitmap? = null) {
     Box(
         modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
+        contentAlignment = Alignment.TopCenter
     ) {
         if (tile == null) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -94,27 +106,25 @@ fun MapScreen(tile: MapTile?, isConnected: Boolean, backgroundBitmap: Bitmap? = 
         val image = remember(tile.bitmap) { tile.bitmap.asImageBitmap() }
         val paper = remember(backgroundBitmap) { backgroundBitmap?.asImageBitmap() }
 
-        // No padding: the map is height-bound in this panel and the scale below
-        // is quantised to whole pixels, so a few dp of inset can cost an entire
-        // step of map size. The paper border is the margin.
+        // No padding, and no vertical centring: the sheet starts at y=0 so its
+        // top edge meets the bottom of the hotbar above it.
         Canvas(modifier = Modifier.fillMaxSize()) {
-            // Whole-pixel scale only. A fractional scale would put block edges
-            // between screen pixels and make the whole map shimmer as the
-            // player walks. The fit is taken against the *sheet* -- map plus
-            // both borders -- so the paper is what's sized to the panel and
-            // the map data still lands on an integer scale inside it.
-            val footprint = tile.size + MAP_BORDER * 2
-            val fit = min(size.width / footprint, size.height / footprint)
-            val scale = fit.toInt().coerceAtLeast(1)
-
-            val drawn = tile.size * scale
-            val border = MAP_BORDER * scale
-            val sheet = drawn + border * 2
+            // The sheet is square and fills whatever the panel gives it, which
+            // in practice means the panel's height. The border keeps vanilla's
+            // 7-in-142 proportion of that, so the paper looks the same as a map
+            // held in game however large the panel is.
+            val sheet = min(size.width, size.height).roundToInt().coerceAtLeast(1)
+            val border = (sheet * (MAP_BORDER / MAP_SHEET)).roundToInt()
+            val drawn = (sheet - border * 2).coerceAtLeast(1)
 
             val sheetLeft = ((size.width - sheet) / 2f).roundToInt()
-            val sheetTop = ((size.height - sheet) / 2f).roundToInt()
+            val sheetTop = 0
             val left = sheetLeft + border
             val top = sheetTop + border
+
+            // Screen pixels per block. Fractional now -- see the note on the
+            // composable about why the whole-pixel snap was given up.
+            val scale = drawn.toFloat() / tile.size
 
             if (paper != null) {
                 drawImage(
@@ -164,8 +174,8 @@ fun MapScreen(tile: MapTile?, isConnected: Boolean, backgroundBitmap: Bitmap? = 
  * Sized off the map scale so it stays readable when the tile is drawn large,
  * but clamped so it never swamps the terrain underneath.
  */
-private fun DrawScope.drawPlayerMarker(scale: Int) {
-    val r = (scale * 3f).coerceIn(9f, 20f)
+private fun DrawScope.drawPlayerMarker(scale: Float) {
+    val r = (scale * 3f).coerceIn(9f, 24f)
 
     val path = Path().apply {
         moveTo(0f, -r)

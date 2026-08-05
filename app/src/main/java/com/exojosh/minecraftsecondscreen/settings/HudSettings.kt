@@ -9,7 +9,12 @@ import androidx.compose.ui.platform.LocalContext
 private const val PREFS_NAME = "hud_layout"
 
 /**
- * A HUD element the player can turn off.
+ * A HUD element the player can move off the second screen.
+ *
+ * Switching one off doesn't discard it -- the mod puts it back on the game's
+ * own HUD on the top screen, so between the two displays the full HUD is
+ * always drawn exactly once. That's the whole point of the toggle: it chooses
+ * *which screen* an element lives on, not whether you get to see it.
  *
  * The granularity is per *element*, not per row, even though several of these
  * share a row on screen -- armor sits beside the bubbles, health beside
@@ -18,8 +23,10 @@ private const val PREFS_NAME = "hud_layout"
  * are most likely to want to break: armor is permanently on screen and mostly
  * static, bubbles only appear when they matter.
  *
- * [key] is persisted, so renaming one silently resets that toggle for everyone
- * who had it off. Rename the constant, not the key.
+ * [key] is both the persisted preference name **and** the wire name the mod
+ * matches in `GameHudVisibility.Element` — renaming one silently resets that
+ * toggle *and* stops the game ever drawing it. Rename the constant, not the
+ * key.
  */
 enum class HudElement(val key: String, val label: String, val description: String) {
     ARMOR("armor", "Armor", "The armor sockets, top left"),
@@ -28,7 +35,15 @@ enum class HudElement(val key: String, val label: String, val description: Strin
     HUNGER("hunger", "Hunger", "The drumstick row"),
     XP_BAR("xp_bar", "XP bar", "The bar and the level number above it"),
     HOTBAR("hotbar", "Hotbar", "The 9 slots. Turning this off also hides the off-hand."),
-    OFFHAND("offhand", "Off-hand slot", "The tappable swap-hands box under the hotbar")
+
+    // The one element with no vanilla counterpart: the game draws the off-hand
+    // box as part of the hotbar, so there's nothing separate to switch back on
+    // up top. The mod ignores this key by design.
+    OFFHAND(
+        "offhand",
+        "Off-hand slot",
+        "The tappable swap-hands box. Stays off the top screen either way."
+    )
 }
 
 /**
