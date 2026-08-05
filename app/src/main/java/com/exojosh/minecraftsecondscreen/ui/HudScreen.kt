@@ -74,19 +74,9 @@ fun HudScreen(
         return
     }
 
-    val context = LocalContext.current
-
-    // Safely load the texture from assets
-    val dirtBitmap = remember {
-        try {
-            context.assets.open("minecraft/textures/block/dirt.png").use { stream ->
-                BitmapFactory.decodeStream(stream)?.asImageBitmap()
-            }
-        } catch (e: Exception) {
-            e.printStackTrace() // Log the exception in Logcat
-            null
-        }
-    }
+    // Comes from the mod over the socket (so it matches the active resource
+    // pack), falling back to a bundled copy.
+    val dirtBitmap = iconProvider?.getBackground()?.asImageBitmap()
 
     if (dirtBitmap != null) {
         RepeatingTextureBackground(

@@ -98,11 +98,14 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // TO DO: Change this into a button rather than boot every time
-        iconProvider = ResourcePackIconProvider(this)
+        hudRepository = HudRepository(lifecycleScope)
+
+        // The mod pushes every HUD texture over the socket on connect, so the
+        // provider reads from the repository first and only falls back to
+        // bundled files. Constructed after the repository for that reason.
+        iconProvider = ResourcePackIconProvider(this, hudRepository)
         // pickFolderLauncher.launch(null)
 
-        hudRepository = HudRepository(lifecycleScope)
         hudRepository.start()
 
         setContent {

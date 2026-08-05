@@ -21,29 +21,25 @@ This app is one half of a two-process system. The other half — the Fabric mod 
 
 Since the second-screen `Presentation` only appears on real dual-screen hardware, `MainActivity` falls back to a minimal status view on the primary screen when no `DISPLAY_CATEGORY_PRESENTATION` display is found — this is the normal (and only practical) way to dev/test on a regular phone or emulator.
 
-## Required local assets
+## HUD textures come from the mod, not from bundled assets
 
-`app/src/main/assets/minecraft/` is **gitignored** — those are textures extracted from Minecraft, which Mojang's EULA doesn't permit redistributing, and this repo is public. The app builds without them but every sprite falls back to a hand-drawn Compose placeholder, so a fresh clone needs them copied in from a game install or resource pack. Paths mirror a resource pack's layout exactly (`assets/minecraft/...` → `app/src/main/assets/minecraft/...`):
+**The app needs no Minecraft assets on disk.** On connect, the mod pushes every HUD texture it needs — hearts, armor, food, bubbles, XP bar, hotbar, the bitmap font sheet, the tiled background — as `{"type":"asset"}` lines, resolved through Minecraft's *own* resource manager. That means they already reflect the player's active resource pack, with no pack-parsing, no SAF folder grant, and no hand-copying. `HudAssetCatalog` on the mod side owns the key→path mapping and is authoritative; `HudIcon.assetKey` must match it.
 
-```
-minecraft/textures/font/ascii.png                          bitmap font (16x16 grid of glyph cells)
-minecraft/textures/block/dirt.png                          tiled HUD background
-minecraft/textures/gui/sprites/hud/hotbar.webp             182x22 logical, any multiple
-minecraft/textures/gui/sprites/hud/hotbar_selection.png    24x23 logical
-minecraft/textures/gui/sprites/hud/experience_bar_background.png    182x5 logical
-minecraft/textures/gui/sprites/hud/experience_bar_progress.png      182x5 logical
-minecraft/textures/gui/sprites/hud/air.png                          9x9 logical
-minecraft/textures/gui/sprites/hud/air_bursting.png                 9x9 logical
-minecraft/textures/gui/sprites/hud/{heart,armor,food}/{full,half,container,empty}.{png,webp}
-```
+`app/src/main/assets/minecraft/` still exists as a **legacy fallback** (and is gitignored — extracted game textures aren't redistributable and this repo is public). `ResourcePackIconProvider` checks the socket-delivered `assetCache` first and only then a bundled file, so those files are optional and safe to delete; they only matter when running against a mod build older than asset delivery. Note the bundled-path candidate names were partly *guessed wrong* — vanilla nests hearts under `heart/` but keeps armor and food flat with an underscore (`hud/armor_full.png`) — another reason to prefer the mod's copy.
 
-**Filenames are case-sensitive** — Android's asset manager won't find `Hotbar.webp` when the code asks for `hotbar.webp`, and on Windows a case-only rename can leave the Gradle asset merger reporting a bogus "Duplicate resources" error until `app/build/intermediates/assets` is deleted. `HudIcon`'s candidate lists accept either `.png` or `.webp`; see `ResourcePackIconProvider`.
+If you do keep local files: **filenames are case-sensitive**, Android's asset manager won't find `Hotbar.webp` when the code asks for `hotbar.webp`, and on Windows a case-only rename can leave the Gradle asset merger reporting a bogus "Duplicate resources" error until `app/build/intermediates/assets` is deleted.
+
+`GameDirectoryAccess` (the SAF folder picker) and `ResourcePackIconProvider`'s `resolveActivePacks`/`searchActivePacksFor` are now **dead weight** — they were the app's own attempt at reading resource packs, which the mod does better. Not yet removed.
 
 ## Architecture
 
 Full protocol spec (message shapes, field meanings, command codes) is in `thor-hud-handoff.md` §2 — don't re-derive it from source when the doc already has it verified. In short: the app connects to the mod's socket, receives a full HUD snapshot every client tick (~20/sec), renders it, and can request an item's icon on demand (`ICON:<itemId>` → base64 PNG reply) or send back a short command code representing a simulated key/hotbar press.
 
-**Since that doc was written**, the snapshot gained `air`/`maxAir` (breath in ticks and its current maximum — Respiration raises it above 300) for the bubble row, and icon replies gained a failure form: `{"type":"icon","itemId":...}` with **no `data` field**, meaning "the mod tried and has no icon for this". `HudRepository` parses both new snapshot fields with `optInt(..., 0)` so a newer app still runs against an older mod build — the default reads as "not drowning" and hides the bubbles.
+**Since that doc was written**, three protocol additions:
+
+- The snapshot gained `air`/`maxAir` (breath in ticks and its current maximum — Respiration raises it above 300) for the bubble row. Parsed with `optInt(..., 0)` so a newer app still runs against an older mod build; the default reads as "not drowning" and hides the bubbles.
+- Icon replies gained a failure form: `{"type":"icon","itemId":...}` with **no `data` field**, meaning "the mod tried and has no icon for this".
+- **`{"type":"asset","assetId":...,"data":...}`** — a HUD texture, pushed unprompted for every catalog key right after a client connects (also `data`-less when unavailable). The `ASSETS` command asks for the bundle again, which is how a resource pack change is picked up — the mod has no reload hook, so nothing re-sends on its own.
 
 **Why the app is standalone rather than a launcher fork:** Android's `Presentation` API (`DISPLAY_CATEGORY_PRESENTATION`) is available to any app, so no ZL2-side integration is needed. "Only show the second screen when the mod is running" falls directly out of socket-connection state, with no separate detection logic.
 

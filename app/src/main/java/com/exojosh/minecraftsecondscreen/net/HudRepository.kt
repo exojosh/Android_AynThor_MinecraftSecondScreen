@@ -88,6 +88,18 @@ class HudRepository(private val scope: CoroutineScope) {
      *  automatically the moment a requested icon arrives -- no manual refresh needed. */
     val iconCache = mutableStateMapOf<String, Bitmap>()
 
+    /** HUD texture key (HudAssetCatalog's names) -> decoded bitmap, pushed by
+     *  the mod on connect. Also Compose-observable, so the HUD redraws itself
+     *  as the bundle streams in rather than needing a load gate. */
+    val assetCache = mutableStateMapOf<String, Bitmap>()
+
+    /** Assets the mod explicitly reported it can't provide. Distinguishes
+     *  "not delivered yet" from "never coming", so callers fall back at the
+     *  right moment instead of rendering nothing indefinitely. */
+    private val unavailableAssets = mutableSetOf<String>()
+
+    fun isAssetUnavailable(assetId: String) = assetId in unavailableAssets
+
     /**
      * Item id -> when we last asked the mod for it. This used to be a plain
      * "already requested" Set, which meant a request that never got answered
@@ -177,6 +189,11 @@ class HudRepository(private val scope: CoroutineScope) {
             // connection re-asks immediately instead of waiting out timeouts.
             pendingIconRequests.clear()
             failedIconRequests.clear()
+            // Keep assetCache -- the mod re-sends the bundle on reconnect, and
+            // holding the old bitmaps avoids the HUD flashing back to
+            // placeholders in between. Misses are cleared so a re-send can
+            // fill in anything that was unavailable last time.
+            unavailableAssets.clear()
             delay(RECONNECT_DELAY_MS)
         }
     }
@@ -184,15 +201,55 @@ class HudRepository(private val scope: CoroutineScope) {
     private fun parseAndPublish(line: String) {
         try {
             val json = JSONObject(line)
-            if (json.optString("type") == "icon") {
-                handleIconResponse(json)
-            } else {
-                handleHudState(json)
+            when (json.optString("type")) {
+                "icon" -> handleIconResponse(json)
+                "asset" -> handleAssetResponse(json)
+                else -> handleHudState(json)
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to parse line: $line", e)
         }
     }
+
+    /**
+     * HUD textures pushed by the mod straight after we connect, keyed by
+     * HudAssetCatalog's short names. The mod resolves these through
+     * Minecraft's own resource manager, so they already reflect whatever
+     * resource pack the player has active -- the app doesn't parse packs.
+     *
+     * A null `data` means the mod looked and that texture isn't available;
+     * recorded as a miss so the caller falls back rather than waiting.
+     */
+    private fun handleAssetResponse(json: JSONObject) {
+        val assetId = json.getString("assetId")
+        val base64Png = if (json.isNull("data")) null else json.optString("data").takeIf { it.isNotEmpty() }
+
+        if (base64Png == null) {
+            Log.w(TAG, "Mod has no HUD asset for $assetId")
+            unavailableAssets.add(assetId)
+            return
+        }
+
+        val bytes = Base64.decode(base64Png, Base64.DEFAULT)
+        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply {
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+            // Pixel art, and the font sheet's pixels get read directly to
+            // measure glyphs -- never let the decoder resample or hardware-back it.
+            inScaled = false
+        })
+
+        if (bitmap != null) {
+            assetCache[assetId] = bitmap
+            unavailableAssets.remove(assetId)
+        } else {
+            Log.w(TAG, "Failed to decode HUD asset $assetId")
+            unavailableAssets.add(assetId)
+        }
+    }
+
+    /** Asks the mod to re-send the HUD texture bundle -- call after the
+     *  player changes resource packs. New connections get it unprompted. */
+    fun requestAssets() = sendCommand("ASSETS")
 
     private fun handleIconResponse(json: JSONObject) {
         val itemId = json.getString("itemId")

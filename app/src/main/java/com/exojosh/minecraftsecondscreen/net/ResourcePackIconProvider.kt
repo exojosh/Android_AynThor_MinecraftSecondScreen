@@ -24,30 +24,54 @@ private const val HUD_SPRITE_DIR = "minecraft/textures/gui/sprites/hud"
  *  textures/font/ascii.png for a long time. */
 private const val FONT_SHEET_PATH = "minecraft/textures/font/ascii.png"
 
-enum class HudIcon(val candidateNames: List<String>) {
-    HEART_FULL(listOf("heart/full.png", "heart/full.webp", "heart_full.png")),
-    HEART_HALF(listOf("heart/half.png", "heart/half.webp", "heart_half.png")),
-    HEART_CONTAINER(listOf("heart/container.png", "heart/container.webp", "heart_container.png")),
-    ARMOR_FULL(listOf("armor/full.png", "armor/full.webp", "armor_full.png")),
-    ARMOR_HALF(listOf("armor/half.png", "armor/half.webp", "armor_half.png")),
-    ARMOR_EMPTY(listOf("armor/empty.png", "armor/empty.webp", "armor_empty.png")),
-    FOOD_FULL(listOf("food_full.png", "food/full.webp", "food/full.png")),
-    FOOD_HALF(listOf("food_half.png", "food/half.webp", "food/half.png")),
-    FOOD_EMPTY(listOf("food_empty.png", "food/empty.webp", "food/empty.png")),
-    EXPERIENCE_BAR_BACKGROUND(listOf("experience_bar_background.png", "experience_bar_background.webp")),
-    EXPERIENCE_BAR_PROGRESS(listOf("experience_bar_progress.png", "experience_bar_progress.webp")),
+/** Tiled behind the whole HUD. */
+private const val BACKGROUND_PATH = "minecraft/textures/block/dirt.png"
+
+/**
+ * A HUD texture the app needs.
+ *
+ * [assetKey] is the primary source: the mod pushes every one of these over
+ * the socket on connect, resolved through Minecraft's own resource manager,
+ * so they already reflect the player's active resource pack. Keys must match
+ * `HudAssetCatalog` on the mod side.
+ *
+ * [candidateNames] is the legacy fallback -- files hand-copied into
+ * `assets/minecraft/textures/gui/sprites/hud/`. Kept so the app still renders
+ * something against a mod build that predates asset delivery, but no longer
+ * the expected setup. Note these guessed names were partly *wrong* (vanilla
+ * nests hearts under `heart/` but keeps armor and food flat with an
+ * underscore); the mod-side catalog is authoritative.
+ */
+enum class HudIcon(val assetKey: String, val candidateNames: List<String>) {
+    HEART_FULL("heart_full", listOf("heart/full.png", "heart/full.webp", "heart_full.png")),
+    HEART_HALF("heart_half", listOf("heart/half.png", "heart/half.webp", "heart_half.png")),
+    HEART_CONTAINER("heart_container", listOf("heart/container.png", "heart/container.webp", "heart_container.png")),
+    ARMOR_FULL("armor_full", listOf("armor/full.png", "armor/full.webp", "armor_full.png")),
+    ARMOR_HALF("armor_half", listOf("armor/half.png", "armor/half.webp", "armor_half.png")),
+    ARMOR_EMPTY("armor_empty", listOf("armor/empty.png", "armor/empty.webp", "armor_empty.png")),
+    FOOD_FULL("food_full", listOf("food_full.png", "food/full.webp", "food/full.png")),
+    FOOD_HALF("food_half", listOf("food_half.png", "food/half.webp", "food/half.png")),
+    FOOD_EMPTY("food_empty", listOf("food_empty.png", "food/empty.webp", "food/empty.png")),
+    EXPERIENCE_BAR_BACKGROUND("xp_bar_background", listOf("experience_bar_background.png", "experience_bar_background.webp")),
+    EXPERIENCE_BAR_PROGRESS("xp_bar_progress", listOf("experience_bar_progress.png", "experience_bar_progress.webp")),
     // Breathing bubbles, 9x9 each. air_empty is only drawn during vanilla's
     // brief pop animation, which BubbleRow doesn't reproduce -- so it isn't
     // listed here.
-    AIR(listOf("air.png", "air.webp")),
-    AIR_BURSTING(listOf("air_bursting.png", "air_bursting.webp")),
+    AIR("air", listOf("air.png", "air.webp")),
+    AIR_BURSTING("air_bursting", listOf("air_bursting.png", "air_bursting.webp")),
     // Vanilla's hotbar strip -- 182x22px logically (1px border + 9*20px slots + 1px border) --
     // and the separate selected-slot highlight overlay, 24x23px, meant to be centered on
-    // whichever slot is selected. Both moved under hud/ in the 1.21.2+ sprite split, same as
-    // the other entries above. Confirm exact pixel dimensions once a real file is bundled --
-    // HotbarRow's alignment math assumes the 182/22/20/24/23 ratios, not literal pixel counts.
-    HOTBAR_BACKGROUND(listOf("hotbar.png", "hotbar.webp")),
-    HOTBAR_SELECTION(listOf("hotbar_selection.png", "hotbar_selection.webp"))
+    // whichever slot is selected.
+    HOTBAR_BACKGROUND("hotbar", listOf("hotbar.png", "hotbar.webp")),
+    HOTBAR_SELECTION("hotbar_selection", listOf("hotbar_selection.png", "hotbar_selection.webp"));
+
+    companion object {
+        /** Not under the hud/ sprite dir, so they're socket-or-nothing on the
+         *  fallback path -- see [ResourcePackIconProvider.getFontSheet] and
+         *  [ResourcePackIconProvider.getBackground]. */
+        const val FONT_ASCII = "font_ascii"
+        const val BACKGROUND = "background"
+    }
 }
 
 /**
@@ -59,7 +83,12 @@ enum class HudIcon(val candidateNames: List<String>) {
  * Requires a granted folder tree from GameDirectoryAccess pointing at the
  * .minecraft root (the folder containing resourcepacks/ and options.txt).
  */
-class ResourcePackIconProvider(private val context: Context) {
+class ResourcePackIconProvider(
+    private val context: Context,
+    /** Where socket-delivered textures come from. Null only in tests/previews
+     *  with no live connection, which falls back to bundled assets. */
+    private val repository: HudRepository? = null
+) {
 
     private val cache = mutableMapOf<HudIcon, Bitmap?>()
     private var activePacksResolved = false
@@ -80,19 +109,26 @@ class ResourcePackIconProvider(private val context: Context) {
     */
 
     /**
-     * Fetches the requested HUD icon from cache or loads it from assets.
+     * The requested HUD texture: the mod's copy if it has arrived over the
+     * socket, otherwise a bundled fallback file.
+     *
+     * Reads `assetCache` directly rather than caching locally so Compose sees
+     * the state read and recomposes as the bundle streams in.
      */
-    fun getIcon(icon: HudIcon): Bitmap? {
-        //return cache.getOrPut(icon) { loadIconFromAssets(icon) }
-        return loadIconFromAssets(icon)
-    }
+    fun getIcon(icon: HudIcon): Bitmap? =
+        repository?.assetCache?.get(icon.assetKey) ?: loadIconFromAssets(icon)
 
     /**
      * The bitmap font sheet backing MinecraftText. Returned as a mutable
      * ARGB_8888 bitmap because the caller measures glyph widths by reading
      * pixels, which a hardware-backed bitmap won't allow.
      */
-    fun getFontSheet(): Bitmap? = loadAsset(FONT_SHEET_PATH)
+    fun getFontSheet(): Bitmap? =
+        repository?.assetCache?.get(HudIcon.FONT_ASCII) ?: loadAsset(FONT_SHEET_PATH)
+
+    /** The block texture tiled behind the HUD. */
+    fun getBackground(): Bitmap? =
+        repository?.assetCache?.get(HudIcon.BACKGROUND) ?: loadAsset(BACKGROUND_PATH)
 
     private fun loadIconFromAssets(icon: HudIcon): Bitmap? {
         Log.d(TAG, "Test, calling loadIconFromAssets")
