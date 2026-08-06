@@ -241,6 +241,31 @@ BINDINGS = [
 ]
 
 
+# What the mod pushes as its chat backlog on connect. Picked to exercise the
+# cases the log can get wrong rather than to look like a real session:
+# multi-run colouring, a line long enough to wrap several times, an empty-ish
+# system line, and characters outside the ascii sheet.
+CHAT_BACKLOG = [
+    [{"text": "Steve joined the game", "color": 0xFFFF55}],
+    [{"text": "<Steve> ", "color": 0xFFFFFF}, {"text": "hey, over here"}],
+    [{"text": "<Alex> "}, {"text": "the diamonds are at "}, {"text": "-412, 12, 288",
+                                                             "color": 0x55FFFF}],
+    [{"text": "<Steve> "},
+     {"text": "this one is deliberately long enough to wrap across several "
+              "lines of the panel, which is the thing most likely to be wrong "
+              "-- a break in the middle of a word, a lost space, or a line that "
+              "runs off the right edge"}],
+    [{"text": "Alex was slain by Zombie", "color": 0xFF5555}],
+    # Outside the ascii.png sheet: should draw as '?' rather than vanish or
+    # shift the rest of the line.
+    [{"text": "<Ελένη> "}, {"text": "καλημέρα"}],
+]
+
+
+def chat_line(text, color=None):
+    return {"type": "chat", "segments": [{"text": text, "color": color}]}
+
+
 def handle(conn, addr, assets, item_tex, state):
     print(f"[sim] client connected: {addr}")
     send_lock = threading.Lock()
@@ -256,6 +281,11 @@ def handle(conn, addr, assets, item_tex, state):
     print(f"[sim] sent {len(assets)} assets")
     send({"type": "bindings", "bindings": BINDINGS})
     print(f"[sim] sent {len(BINDINGS)} key bindings")
+    # Then the chat backlog, in the mod's order -- it goes last there because
+    # it needs the font sheet that came with the asset bundle.
+    for segments in CHAT_BACKLOG:
+        send({"type": "chat", "segments": segments})
+    print(f"[sim] sent {len(CHAT_BACKLOG)} chat messages")
 
     stop = threading.Event()
 
@@ -283,6 +313,18 @@ def handle(conn, addr, assets, item_tex, state):
                         send({"type": "asset", "assetId": k, "data": d})
                 elif cmd == "BINDINGS":
                     send({"type": "bindings", "bindings": BINDINGS})
+                elif cmd.startswith("CHAT:"):
+                    said = cmd[5:]
+                    # The real server echoes what you say back as a chat
+                    # message, and that echo is the only on-screen confirmation
+                    # the app ever gets that sending worked -- so the sim has
+                    # to do it too, or the Chat tab looks broken here and fine
+                    # on device.
+                    if said.startswith("/"):
+                        send(chat_line(f"Unknown command: {said}", 0xFF5555))
+                    else:
+                        send({"type": "chat", "segments": [
+                            {"text": "<You> "}, {"text": said}]})
         stop.set()
 
     threading.Thread(target=reader, daemon=True).start()
@@ -290,10 +332,18 @@ def handle(conn, addr, assets, item_tex, state):
     map_png = fake_map_png()
     yaw = 0.0
     walk = 0.0
+    ticks = 0
 
     try:
         while not stop.is_set():
             send(state)
+
+            # A message every ~10s, so the log's live behaviour -- following the
+            # tail, and *not* following it while you're scrolled up reading --
+            # is visible without needing a second player.
+            ticks += 1
+            if ticks % 20 == 0:
+                send(chat_line(f"<Alex> still here ({ticks // 20})"))
 
             # Drift the player and spin the yaw so the marker is visibly live
             # and the tile origin actually moves, which is what catches

@@ -34,6 +34,11 @@ private const val ICON_REQUEST_TIMEOUT_MS = 3000L
 /** Backoff after the mod explicitly says it has no icon for an item. */
 private const val ICON_FAILURE_RETRY_MS = 60_000L
 
+/** How many chat messages are kept. Matches the mod's own backlog cap, which
+ *  in turn matches vanilla's ChatHud, so scrolling back here reaches exactly as
+ *  far as scrolling back on the top screen would. */
+private const val CHAT_HISTORY_LIMIT = 100
+
 data class HotbarSlot(
     val itemId: String,
     val count: Int,
@@ -94,6 +99,30 @@ data class GameBinding(
     val unbound: Boolean
 )
 
+/**
+ * One run of chat text sharing a colour.
+ *
+ * [color] is an RGB value from the game's own text styling, or null for "the
+ * default" — the mod omits the field entirely in that case. Only colour
+ * survives the mod's flattening of Minecraft's Text tree; bold/italic/
+ * obfuscated are dropped, because this app draws from a bitmap font sheet
+ * where each of those would need its own draw pass, and colour is the part
+ * that carries meaning in a chat log (team colours, a red death message, a
+ * yellow join notice).
+ */
+data class ChatSegment(val text: String, val color: Int?)
+
+/**
+ * One chat line as it arrived from the mod.
+ *
+ * [id] is assigned here rather than sent, purely so a list key is stable —
+ * two identical messages ("hi" twice) are genuinely different entries and must
+ * not collapse into one in a `LazyColumn`.
+ */
+data class ChatMessage(val id: Long, val segments: List<ChatSegment>) {
+    val plainText: String get() = segments.joinToString("") { it.text }
+}
+
 data class HudState(
     val health: Float,
     val maxHealth: Float,
@@ -152,6 +181,21 @@ class HudRepository(private val scope: CoroutineScope) {
      */
     private val _bindings = MutableStateFlow<List<GameBinding>>(emptyList())
     val bindings: StateFlow<List<GameBinding>> = _bindings.asStateFlow()
+
+    /**
+     * The chat log, oldest first, capped at [CHAT_HISTORY_LIMIT].
+     *
+     * Cleared on disconnect — unlike [bindings] and [assetCache], which are
+     * kept precisely *because* the mod re-sends them. The mod re-sends chat
+     * too: it holds its own backlog and pushes it to each new connection. So
+     * keeping the old copy here wouldn't preserve anything, it would duplicate
+     * every message the backlog repeats.
+     */
+    private val _chatMessages = MutableStateFlow<List<ChatMessage>>(emptyList())
+    val chatMessages: StateFlow<List<ChatMessage>> = _chatMessages.asStateFlow()
+
+    /** Only ever touched from the socket reader thread. */
+    private var nextChatId = 0L
 
     /** Item id -> decoded icon bitmap. mutableStateMapOf so Compose recomposes
      *  automatically the moment a requested icon arrives -- no manual refresh needed. */
@@ -256,6 +300,9 @@ class HudRepository(private val scope: CoroutineScope) {
             // Drop the map too -- a tile from wherever the player was before
             // the socket died is worse than showing nothing.
             _mapTile.value = null
+            // The mod re-sends its whole chat backlog to every new connection,
+            // so anything kept here would come back a second time.
+            _chatMessages.value = emptyList()
             // Anything we were still waiting on died with the socket. Drop the
             // in-flight bookkeeping (but keep iconCache) so the next
             // connection re-asks immediately instead of waiting out timeouts.
@@ -278,6 +325,7 @@ class HudRepository(private val scope: CoroutineScope) {
                 "asset" -> handleAssetResponse(json)
                 "map" -> handleMapResponse(json)
                 "bindings" -> handleBindingsResponse(json)
+                "chat" -> handleChatResponse(json)
                 else -> handleHudState(json)
             }
         } catch (e: Exception) {
@@ -354,6 +402,48 @@ class HudRepository(private val scope: CoroutineScope) {
     /** Asks the mod to re-send the key bindings -- worth doing whenever the
      *  picker opens, since a rebind in game pushes nothing on its own. */
     fun requestBindings() = sendCommand("BINDINGS")
+
+    /**
+     * One chat line, as coloured runs.
+     *
+     * Arrives both live and as a backlog replay right after connecting — the
+     * two are indistinguishable on the wire and don't need to be told apart,
+     * since the log is cleared on disconnect.
+     */
+    private fun handleChatResponse(json: JSONObject) {
+        val array = json.optJSONArray("segments") ?: return
+        val segments = buildList {
+            for (i in 0 until array.length()) {
+                val entry = array.getJSONObject(i)
+                add(
+                    ChatSegment(
+                        text = entry.optString("text"),
+                        // Absent means "the default colour" -- the mod omits
+                        // the field rather than sending a sentinel.
+                        color = if (entry.isNull("color")) null else entry.optInt("color")
+                    )
+                )
+            }
+        }
+        if (segments.isEmpty()) return
+
+        val message = ChatMessage(id = nextChatId++, segments = segments)
+        _chatMessages.value = (_chatMessages.value + message).takeLast(CHAT_HISTORY_LIMIT)
+    }
+
+    /**
+     * Says [message] in game, as the player. A leading `/` makes it a command;
+     * the mod does that split, following the game's own chat box.
+     *
+     * Newlines are flattened because the protocol is newline-delimited — a
+     * message containing one would arrive at the mod as two separate commands,
+     * the second of which would be interpreted as something else entirely.
+     */
+    fun sendChat(message: String) {
+        val oneLine = message.replace('\n', ' ').replace('\r', ' ').trim()
+        if (oneLine.isEmpty()) return
+        sendCommand("CHAT:$oneLine")
+    }
 
     /**
      * Presses a key binding by id, the form the configurable input grid uses.
