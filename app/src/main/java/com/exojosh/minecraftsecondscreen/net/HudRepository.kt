@@ -25,7 +25,10 @@ import java.util.concurrent.ConcurrentHashMap
 private const val TAG = "ThorHudRepository"
 private const val HOST = "127.0.0.1"
 private const val PORT = 48291
-private const val RECONNECT_DELAY_MS = 1500L
+/** Icons are ~4KB PNGs each. A player who opens a lot of containers can ask
+ *  for hundreds; this caps what's held without being small enough to thrash on
+ *  a normal inventory (46 slots) plus a container (54). */
+private const val ICON_CACHE_LIMIT = 200
 
 /** How long an unanswered ICON: request stays "in flight" before we re-send it.
  *  The mod renders at most a couple of icons per tick, so give it room. */
@@ -265,6 +268,11 @@ class HudRepository(private val scope: CoroutineScope) {
     /** Whether the mod identified itself on the *current* connection. */
     private var sawHello = false
 
+    /** Consecutive failed/short-lived connections, driving [ReconnectPolicy].
+     *  Reset by the mod's hello, which is the only proof we're really talking
+     *  to it — a socket that opens and instantly closes is not a success. */
+    private var failedConnections = 0
+
     private val _mapTile = MutableStateFlow<MapTile?>(null)
     val mapTile: StateFlow<MapTile?> = _mapTile.asStateFlow()
 
@@ -309,6 +317,20 @@ class HudRepository(private val scope: CoroutineScope) {
      *  automatically the moment a requested icon arrives -- no manual refresh needed. */
     val iconCache = mutableStateMapOf<String, Bitmap>()
 
+    /**
+     * Icon ids in least-recently-used order, so [iconCache] can be bounded.
+     *
+     * It used to grow without limit. That was survivable while the app only
+     * ever showed nine hotbar slots; with the inventory and containers on
+     * screen a session can touch hundreds of distinct items, each a decoded
+     * ARGB_8888 bitmap held forever.
+     *
+     * LRU rather than insertion order because the items on screen are asked
+     * for every frame — evicting by age would throw out exactly the icons
+     * being looked at.
+     */
+    private val iconUsage = LinkedHashSet<String>()
+
     /** HUD texture key (HudAssetCatalog's names) -> decoded bitmap, pushed by
      *  the mod on connect. Also Compose-observable, so the HUD redraws itself
      *  as the bundle streams in rather than needing a load gate. */
@@ -352,7 +374,15 @@ class HudRepository(private val scope: CoroutineScope) {
      *  updates. Safe to call every frame: repeat calls for an item we're
      *  already waiting on are dropped until the request goes stale. */
     fun requestIcon(itemId: String): Bitmap? {
-        iconCache[itemId]?.let { return it }
+        iconCache[itemId]?.let {
+            // Called during composition for everything on screen, which is
+            // exactly the signal LRU wants.
+            synchronized(iconUsage) {
+                iconUsage.remove(itemId)
+                iconUsage.add(itemId)
+            }
+            return it
+        }
         if (itemId.isEmpty() || itemId == "minecraft:air") return null
 
         val now = SystemClock.elapsedRealtime()
@@ -444,7 +474,12 @@ class HudRepository(private val scope: CoroutineScope) {
             // placeholders in between. Misses are cleared so a re-send can
             // fill in anything that was unavailable last time.
             unavailableAssets.clear()
-            delay(RECONNECT_DELAY_MS)
+
+            // Backs off only after a sustained failure -- see ReconnectPolicy
+            // for why the first few stay fast.
+            val wait = ReconnectPolicy.delayMs(failedConnections)
+            failedConnections++
+            delay(wait)
         }
     }
 
@@ -574,6 +609,7 @@ class HudRepository(private val scope: CoroutineScope) {
         Log.i(TAG, "Mod said hello: ${json.optString("mod")} protocol ${json.optInt("protocol")}")
         sawHello = true
         silentConnections = 0
+        failedConnections = 0
         _portConflict.value = false
     }
 
@@ -746,11 +782,30 @@ class HudRepository(private val scope: CoroutineScope) {
         val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
         if (bitmap != null) {
             iconCache[itemId] = bitmap
+            rememberIconUse(itemId)
             failedIconRequests.remove(itemId)
         } else {
             Log.w(TAG, "Failed to decode icon bitmap for $itemId")
             failedIconRequests[itemId] = SystemClock.elapsedRealtime()
         }
+    }
+
+    /** Records a use and evicts the least recently used icons over the cap. */
+    private fun rememberIconUse(itemId: String) {
+        val evicted = synchronized(iconUsage) {
+            iconUsage.remove(itemId)
+            iconUsage.add(itemId)
+            val over = iconUsage.size - ICON_CACHE_LIMIT
+            if (over <= 0) {
+                emptyList()
+            } else {
+                val oldest = iconUsage.take(over)
+                iconUsage.removeAll(oldest.toSet())
+                oldest
+            }
+        }
+        // Outside the lock: touching the state map notifies Compose.
+        evicted.forEach { iconCache.remove(it) }
     }
 
     private fun handleHudState(json: JSONObject) {
