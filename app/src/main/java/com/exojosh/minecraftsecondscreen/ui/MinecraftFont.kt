@@ -2,6 +2,7 @@ package com.exojosh.minecraftsecondscreen.ui
 
 import android.graphics.Bitmap
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -38,6 +39,10 @@ private const val GLYPH_FONT_PIXELS = 8
 /** Space has no pixels to measure. Vanilla supplies its advance separately
  *  (the "space" provider in default.json), so hardcode the same value. */
 private const val SPACE_ADVANCE = 4
+
+/** Vanilla's chat line pitch: an 8px glyph on a 9px stride (see ChatHud's
+ *  `getLineHeight`), so lines have exactly one pixel between them. */
+private const val LINE_HEIGHT_FONT_PIXELS = 9
 
 /** Vanilla darkens text shadow to a quarter brightness, keeping alpha. */
 private fun Color.toShadowColor(): Color = Color(red / 4f, green / 4f, blue / 4f, alpha)
@@ -116,6 +121,80 @@ class MinecraftFontSheet(
 @Composable
 fun rememberMinecraftFont(bitmap: Bitmap?): MinecraftFontSheet? =
     remember(bitmap) { bitmap?.let { MinecraftFontSheet.from(it) } }
+
+/**
+ * Height a block of [lineCount] chat lines occupies, in font pixels.
+ * Exposed so a caller can size or scroll a log without duplicating the +1 the
+ * drop shadow adds below the last line.
+ */
+fun chatBlockHeightFontPixels(lineCount: Int): Int =
+    if (lineCount <= 0) 0 else (lineCount - 1) * LINE_HEIGHT_FONT_PIXELS + GLYPH_FONT_PIXELS + 1
+
+/**
+ * Draws pre-wrapped, per-run-coloured lines — the chat log's renderer.
+ *
+ * Separate from [MinecraftText] rather than a parameter on it because the two
+ * differ in what they're for: [MinecraftText] is a single styled string that
+ * *measures itself* and sizes its box to fit, which is what a HUD label wants.
+ * This one takes a width from its parent, has already been wrapped to it by
+ * [ChatLineWrapper], and mixes colours within a line — so self-measurement
+ * would be circular.
+ *
+ * Shadows are drawn for a whole line before any of its glyphs, matching how
+ * vanilla batches its shadow layer: drawing them per glyph would let each
+ * glyph's shadow land on top of the one before it.
+ *
+ * @param pixelSize size of one *font* pixel — a line is 9 * pixelSize tall.
+ * @param defaultColor colour for runs the game didn't colour explicitly.
+ */
+@Composable
+fun MinecraftTextLines(
+    lines: List<List<ChatRun>>,
+    fontSheet: MinecraftFontSheet,
+    pixelSize: Dp,
+    modifier: Modifier = Modifier,
+    defaultColor: Color = Color.White
+) {
+    Canvas(
+        modifier = modifier.height(pixelSize * chatBlockHeightFontPixels(lines.size))
+    ) {
+        val scale = pixelSize.toPx()
+        val cell = fontSheet.cellSize
+        val glyphSize = (GLYPH_FONT_PIXELS * scale).roundToInt().coerceAtLeast(1)
+        val dstSize = IntSize(glyphSize, glyphSize)
+
+        fun drawLine(runs: List<ChatRun>, topFontPixels: Int, shadowPass: Boolean) {
+            val offset = if (shadowPass) 1f else 0f
+            val y = ((topFontPixels + offset) * scale).roundToInt()
+            var penX = offset
+
+            for (run in runs) {
+                val runColor = run.color?.let { Color(0xFF000000.toInt() or it) } ?: defaultColor
+                val passColor = if (shadowPass) runColor.toShadowColor() else runColor
+
+                for (char in run.text) {
+                    val code = if (char.code in 0..255) char.code else '?'.code
+                    drawImage(
+                        image = fontSheet.image,
+                        srcOffset = IntOffset((code % GRID) * cell, (code / GRID) * cell),
+                        srcSize = IntSize(cell, cell),
+                        dstOffset = IntOffset((penX * scale).roundToInt(), y),
+                        dstSize = dstSize,
+                        colorFilter = ColorFilter.tint(passColor),
+                        filterQuality = FilterQuality.None
+                    )
+                    penX += fontSheet.advanceOf(char)
+                }
+            }
+        }
+
+        lines.forEachIndexed { index, runs ->
+            val top = index * LINE_HEIGHT_FONT_PIXELS
+            drawLine(runs, top, shadowPass = true)
+            drawLine(runs, top, shadowPass = false)
+        }
+    }
+}
 
 /**
  * Draws [text] in Minecraft's font.

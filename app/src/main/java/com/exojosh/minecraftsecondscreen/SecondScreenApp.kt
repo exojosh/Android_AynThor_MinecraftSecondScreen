@@ -29,11 +29,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.exojosh.minecraftsecondscreen.net.HudRepository
 import com.exojosh.minecraftsecondscreen.net.ResourcePackIconProvider
+import com.exojosh.minecraftsecondscreen.ui.ChatScreen
 import com.exojosh.minecraftsecondscreen.ui.HudScreen
 import com.exojosh.minecraftsecondscreen.ui.InputGridScreen
 import com.exojosh.minecraftsecondscreen.ui.MapScreen
 import com.exojosh.minecraftsecondscreen.ui.RepeatingTextureBackground
 import com.exojosh.minecraftsecondscreen.ui.SettingsScreen
+import com.exojosh.minecraftsecondscreen.ui.rememberChatDraftState
+import com.exojosh.minecraftsecondscreen.ui.rememberMinecraftFont
 import com.exojosh.minecraftsecondscreen.settings.HudElement
 import com.exojosh.minecraftsecondscreen.settings.rememberHudSettings
 import com.exojosh.minecraftsecondscreen.settings.rememberInputSettings
@@ -62,6 +65,7 @@ private val TAB_SELECTED_COLOR = Color(0xFF6750A4)
  */
 enum class SecondScreenTab(val label: String) {
     HUD("HUD"),
+    CHAT("Chat"),
     INPUT("Input"),
     SETTINGS("Settings")
 }
@@ -75,9 +79,19 @@ fun SecondScreenApp(
     val mapTile by hudRepository.mapTile.collectAsState()
     val isConnected by hudRepository.isConnected.collectAsState()
     val bindings by hudRepository.bindings.collectAsState()
+    val chatMessages by hudRepository.chatMessages.collectAsState()
     var selectedTab by remember { mutableStateOf(SecondScreenTab.HUD) }
     val settings = rememberHudSettings()
     val inputSettings = rememberInputSettings()
+
+    // Held here rather than inside ChatScreen because a tab switch disposes the
+    // panel's content: a draft owned down there would be lost by glancing at
+    // the map mid-sentence.
+    val chatDraft = rememberChatDraftState()
+
+    // The chat log draws in Minecraft's own bitmap font, same as the XP level
+    // and stack counts, so a resource pack restyling the font applies here too.
+    val chatFont = rememberMinecraftFont(iconProvider.getFontSheet())
 
     // Anything switched off down here goes back to the game's own HUD on the
     // top screen, so an element is never simply lost -- between the two
@@ -149,6 +163,14 @@ fun SecondScreenApp(
                             tile = mapTile,
                             isConnected = isConnected,
                             backgroundBitmap = iconProvider.getMapBackground()
+                        )
+
+                        SecondScreenTab.CHAT -> ChatScreen(
+                            messages = chatMessages,
+                            fontSheet = chatFont,
+                            isConnected = isConnected,
+                            draft = chatDraft,
+                            onSend = hudRepository::sendChat
                         )
 
                         SecondScreenTab.INPUT -> InputGridScreen(
