@@ -54,6 +54,9 @@ private val TAB_STRIP_HEIGHT = 44.dp
 
 private val TAB_SELECTED_COLOR = Color(0xFF6750A4)
 
+/** Vanilla's error red, for the one banner this screen ever shows. */
+private val PORT_CONFLICT_COLOR = Color(0xCCB3261E)
+
 /**
  * What fills the panel *below* the hotbar.
  *
@@ -99,6 +102,7 @@ fun SecondScreenApp(
     val bindings by hudRepository.bindings.collectAsState()
     val chatMessages by hudRepository.chatMessages.collectAsState()
     val container by hudRepository.container.collectAsState()
+    val portConflict by hudRepository.portConflict.collectAsState()
     var selectedTab by remember { mutableStateOf(SecondScreenTab.HUD) }
     val settings = rememberHudSettings()
     val inputSettings = rememberInputSettings()
@@ -215,6 +219,26 @@ fun SecondScreenApp(
                         )
                     }
                 }
+            }
+
+            // Named rather than left as a mystery. Something else accepting on
+            // 48291 -- in practice a leftover `adb reverse` putting adbd there
+            // -- used to read as an ordinary flapping connection, so the screen
+            // alternated "Not connected" with "Waiting for map data..." and
+            // said nothing about the real problem. Drawn over everything,
+            // because whatever is underneath is wrong anyway.
+            if (portConflict) {
+                Text(
+                    text = "Port 48291 is taken by something else — " +
+                        "clear a leftover 'adb reverse tcp:48291 tcp:48291'.",
+                    color = Color.White,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .zIndex(2f)
+                        .fillMaxWidth()
+                        .background(PORT_CONFLICT_COLOR)
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                )
             }
 
             Row(
