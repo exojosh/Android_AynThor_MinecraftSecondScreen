@@ -1,9 +1,7 @@
 package com.exojosh.minecraftsecondscreen.ui
 
 import android.graphics.Bitmap
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -17,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,7 +25,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.exojosh.minecraftsecondscreen.net.HotbarSlot
 
 /**
@@ -54,12 +50,6 @@ private const val ICON_SIZE = 16f
 private const val SELECTION_OFFSET = -1f
 private const val SELECTION_WIDTH = 24f
 private const val SELECTION_HEIGHT = 23f
-
-/** Durability bar: 13x2 at +2,+13 within the 16x16 item, per drawItemBar. */
-private const val BAR_INSET_X = 2f
-private const val BAR_INSET_Y = 13f
-private const val BAR_WIDTH = 13f
-private const val BAR_HEIGHT = 2f
 
 /**
  * The off-hand box, measured off vanilla's own `hotbar_offhand_right.png`
@@ -346,9 +336,12 @@ private fun HotbarSlotView(
 }
 
 /**
- * Contents of one slot, drawn inside a box exactly [ICON_SIZE] * [unit]
- * square -- i.e. the box maps 1:1 onto vanilla's 16x16 item area, so
- * decorations can use vanilla's own pixel offsets.
+ * Contents of one slot.
+ *
+ * The drawing itself lives in [ItemStackGraphic], shared with the inventory
+ * grid — they render the same thing and a fix to either should land in both.
+ * The box is [ICON_SIZE] * [unit] square, i.e. 1:1 with vanilla's 16x16 item
+ * area, which is what lets the decorations use vanilla's own pixel offsets.
  */
 @Composable
 private fun BoxScope.HotbarSlotContent(
@@ -357,88 +350,10 @@ private fun BoxScope.HotbarSlotContent(
     fontSheet: MinecraftFontSheet?,
     glintTexture: Bitmap?,
     unit: Dp
-) {
-    if (slot.itemId == "minecraft:air") return
-
-    if (icon != null) {
-        Image(
-            bitmap = icon.asImageBitmap(),
-            contentDescription = null,
-            contentScale = ContentScale.FillBounds,
-            filterQuality = FilterQuality.None,
-            modifier = Modifier.fillMaxSize()
-        )
-    }
-
-    if (slot.hasGlint) {
-        // Vanilla's real glint: scrolling, additive, and masked to the item's
-        // own alpha. It replaced a static translucent purple gradient across
-        // the whole box, which lit up the empty corners too and so read as a
-        // highlighted *slot* rather than an enchanted item.
-        ItemGlint(icon = icon, glintTexture = glintTexture)
-    }
-
-    slot.durabilityFraction?.let { fraction ->
-        // Vanilla only shows the bar once an item has taken damage, not on a
-        // full-durability item -- matches that here too.
-        if (fraction < 1f) {
-            DurabilityBar(
-                fraction = fraction,
-                unit = unit,
-                modifier = Modifier.offset(x = unit * BAR_INSET_X, y = unit * BAR_INSET_Y)
-            )
-        }
-    }
-
-    // Vanilla only labels a stack holding more than one, bottom-right with a
-    // drop shadow, overhanging the item box by 1px on both edges.
-    if (slot.count > 1) {
-        val countModifier = Modifier
-            .align(Alignment.BottomEnd)
-            .offset(x = unit, y = unit)
-
-        if (fontSheet != null) {
-            MinecraftText(
-                text = slot.count.toString(),
-                fontSheet = fontSheet,
-                pixelSize = unit,
-                modifier = countModifier
-            )
-        } else {
-            // No font sheet bundled -- keep a system-font label rather than
-            // dropping the count entirely.
-            Text(
-                text = slot.count.toString(),
-                fontSize = 10.sp,
-                color = Color.White,
-                modifier = countModifier
-            )
-        }
-    }
-}
-
-@Composable
-private fun DurabilityBar(fraction: Float, unit: Dp, modifier: Modifier = Modifier) {
-    Canvas(
-        modifier = modifier.size(width = unit * BAR_WIDTH, height = unit * BAR_HEIGHT)
-    ) {
-        // Vanilla steps through discrete colors (green -> yellow -> red) as
-        // durability drops, rather than a smooth gradient -- roughly
-        // reproduced here with two thresholds.
-        val color = when {
-            fraction > 0.5f -> Color(0xFF4CD137)
-            fraction > 0.2f -> Color(0xFFE1B12C)
-            else -> Color(0xFFE84118)
-        }
-        // Black backing is the full 2px; the coloured fill is the top 1px,
-        // same as drawItemBar.
-        drawRect(color = Color.Black)
-        drawRect(
-            color = color,
-            size = size.copy(
-                width = size.width * fraction.coerceIn(0f, 1f),
-                height = size.height / 2f
-            )
-        )
-    }
-}
+) = ItemStackGraphic(
+    stack = slot,
+    icon = icon,
+    fontSheet = fontSheet,
+    glintTexture = glintTexture,
+    unit = unit
+)

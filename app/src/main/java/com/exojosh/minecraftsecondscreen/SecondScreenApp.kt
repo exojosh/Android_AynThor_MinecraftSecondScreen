@@ -27,11 +27,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import com.exojosh.minecraftsecondscreen.net.HudIcon
 import com.exojosh.minecraftsecondscreen.net.HudRepository
 import com.exojosh.minecraftsecondscreen.net.ResourcePackIconProvider
 import com.exojosh.minecraftsecondscreen.ui.ChatScreen
 import com.exojosh.minecraftsecondscreen.ui.HudScreen
 import com.exojosh.minecraftsecondscreen.ui.InputGridScreen
+import com.exojosh.minecraftsecondscreen.ui.InventoryScreen
 import com.exojosh.minecraftsecondscreen.ui.MapScreen
 import com.exojosh.minecraftsecondscreen.ui.RepeatingTextureBackground
 import com.exojosh.minecraftsecondscreen.ui.SettingsScreen
@@ -56,16 +58,32 @@ private val TAB_SELECTED_COLOR = Color(0xFF6750A4)
  * What fills the panel *below* the hotbar.
  *
  * The status stack (armor, hearts, hunger, XP, hotbar) is not part of this --
- * it's always on screen, on every tab. Switching tabs only swaps the panel
- * underneath it, because the whole point of the second screen is that vital
- * signs stay visible while you do something else with the rest of the space.
+ * on almost every tab it stays on screen and only the panel underneath swaps,
+ * because the whole point of the second screen is that vital signs stay visible
+ * while you do something else with the rest of the space. [showsStatusStack] is
+ * the one deliberate exception; see there.
  *
- * A Settings tab belongs here later; adding it is one entry plus one `when`
- * branch.
+ * Adding a tab is one entry plus one `when` branch — the strip is generated
+ * from this enum, so don't hand-write another Button.
  */
-enum class SecondScreenTab(val label: String) {
+enum class SecondScreenTab(
+    val label: String,
+    /**
+     * Whether the status stack stays on screen above this tab's panel.
+     *
+     * True everywhere except Items, and that exception is the point of the
+     * flag rather than a loophole in it: the inventory is six rows of slots
+     * that have to be draggable across without scrolling, and it simply does
+     * not fit under the hearts, armor, XP bar and hotbar. It's also the one
+     * tab you look at *deliberately* — you open your inventory, you don't
+     * glance at it mid-fight — so the vital signs are worth less here than
+     * anywhere else.
+     */
+    val showsStatusStack: Boolean = true
+) {
     HUD("HUD"),
     CHAT("Chat"),
+    ITEMS("Items", showsStatusStack = false),
     INPUT("Input"),
     SETTINGS("Settings")
 }
@@ -80,6 +98,7 @@ fun SecondScreenApp(
     val isConnected by hudRepository.isConnected.collectAsState()
     val bindings by hudRepository.bindings.collectAsState()
     val chatMessages by hudRepository.chatMessages.collectAsState()
+    val container by hudRepository.container.collectAsState()
     var selectedTab by remember { mutableStateOf(SecondScreenTab.HUD) }
     val settings = rememberHudSettings()
     val inputSettings = rememberInputSettings()
@@ -131,7 +150,7 @@ fun SecondScreenApp(
                 // target hidden under the map, which is worse than either
                 // drawing on top. The clearance is comfortable at any normal
                 // HUD height; this makes it not depend on that arithmetic.
-                Box(modifier = Modifier.zIndex(1f)) {
+                if (selectedTab.showsStatusStack) Box(modifier = Modifier.zIndex(1f)) {
                     HudScreen(
                         state = hudState,
                         hudRepository = hudRepository,
@@ -171,6 +190,15 @@ fun SecondScreenApp(
                             isConnected = isConnected,
                             draft = chatDraft,
                             onSend = hudRepository::sendChat
+                        )
+
+                        SecondScreenTab.ITEMS -> InventoryScreen(
+                            state = container,
+                            fontSheet = chatFont,
+                            glintTexture = iconProvider.getIcon(HudIcon.ENCHANTED_GLINT),
+                            isConnected = isConnected,
+                            itemIcon = hudRepository::requestIcon,
+                            onSlotClick = hudRepository::sendSlotClick
                         )
 
                         SecondScreenTab.INPUT -> InputGridScreen(

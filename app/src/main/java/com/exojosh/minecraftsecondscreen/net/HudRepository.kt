@@ -123,6 +123,48 @@ data class ChatMessage(val id: Long, val segments: List<ChatSegment>) {
     val plainText: String get() = segments.joinToString("") { it.text }
 }
 
+/** One inventory slot: what's in it, and whether it will accept what's
+ *  currently on the cursor. */
+data class ContainerSlot(val stack: HotbarSlot, val mayPlace: Boolean)
+
+/**
+ * The open screen handler, as the mod reports it.
+ *
+ * With no container open this is the player's own inventory — the mod streams
+ * `currentScreenHandler` either way, because a move is a *click on a slot* and
+ * the server only honours those against the handler it believes is open.
+ *
+ * [playerStart]/[hotbarStart]/[armorStart]/[offhandIndex] are sent rather than
+ * derived here. Vanilla's convention (the player's 36 slots are the last 36 of
+ * any container) holds for every vanilla handler, but knowing it is the mod's
+ * job — if something ever breaks the convention it gets fixed in one place.
+ * [armorStart] and [offhandIndex] are -1 for anything but the player's own
+ * inventory.
+ *
+ * [syncId] is echoed back with every click as a staleness check: a chest can
+ * close between this arriving and a finger landing, and "slot 3" then means
+ * something completely different.
+ */
+data class ContainerState(
+    val syncId: Int,
+    val handlerType: String?,
+    /** What's "on the mouse". Non-empty means a move is half-finished — it has
+     *  to be drawn, or the player can't see where their item went. */
+    val cursor: HotbarSlot,
+    val slots: List<ContainerSlot>,
+    val playerStart: Int,
+    val hotbarStart: Int,
+    val armorStart: Int,
+    val offhandIndex: Int
+) {
+    val isPlayerInventory: Boolean get() = armorStart >= 0
+    val hasCursorStack: Boolean get() = cursor.itemId != "minecraft:air" && cursor.count > 0
+
+    /** Slots belonging to the open container rather than to the player. Empty
+     *  for the player's own inventory. */
+    val containerRange: IntRange get() = 0 until playerStart
+}
+
 data class HudState(
     val health: Float,
     val maxHealth: Float,
@@ -196,6 +238,17 @@ class HudRepository(private val scope: CoroutineScope) {
 
     /** Only ever touched from the socket reader thread. */
     private var nextChatId = 0L
+
+    /**
+     * The open screen handler — the player's own inventory when no container
+     * is open.
+     *
+     * Cleared on disconnect: a stale inventory is worse than none, because
+     * every slot in it is a tap target that would send a click against a
+     * handler that no longer exists.
+     */
+    private val _container = MutableStateFlow<ContainerState?>(null)
+    val container: StateFlow<ContainerState?> = _container.asStateFlow()
 
     /** Item id -> decoded icon bitmap. mutableStateMapOf so Compose recomposes
      *  automatically the moment a requested icon arrives -- no manual refresh needed. */
@@ -303,6 +356,9 @@ class HudRepository(private val scope: CoroutineScope) {
             // The mod re-sends its whole chat backlog to every new connection,
             // so anything kept here would come back a second time.
             _chatMessages.value = emptyList()
+            // Every slot in a stale inventory is a live tap target aimed at a
+            // handler that no longer exists -- worse than showing nothing.
+            _container.value = null
             // Anything we were still waiting on died with the socket. Drop the
             // in-flight bookkeeping (but keep iconCache) so the next
             // connection re-asks immediately instead of waiting out timeouts.
@@ -326,6 +382,7 @@ class HudRepository(private val scope: CoroutineScope) {
                 "map" -> handleMapResponse(json)
                 "bindings" -> handleBindingsResponse(json)
                 "chat" -> handleChatResponse(json)
+                "container" -> handleContainerResponse(json)
                 else -> handleHudState(json)
             }
         } catch (e: Exception) {
@@ -430,6 +487,58 @@ class HudRepository(private val scope: CoroutineScope) {
         val message = ChatMessage(id = nextChatId++, segments = segments)
         _chatMessages.value = (_chatMessages.value + message).takeLast(CHAT_HISTORY_LIMIT)
     }
+
+    /**
+     * The open screen handler's contents.
+     *
+     * Sent by the mod only when something actually changes — a player walking
+     * around leaves this untouched for minutes — plus once to each new
+     * connection so the tab isn't empty until the first move.
+     */
+    private fun handleContainerResponse(json: JSONObject) {
+        val array = json.optJSONArray("slots") ?: return
+        val slots = buildList {
+            for (i in 0 until array.length()) {
+                val entry = array.getJSONObject(i)
+                add(
+                    ContainerSlot(
+                        stack = parseSlot(entry.getJSONObject("stack")),
+                        mayPlace = entry.optBoolean("mayPlace", true)
+                    )
+                )
+            }
+        }
+
+        _container.value = ContainerState(
+            syncId = json.getInt("syncId"),
+            handlerType = if (json.isNull("handlerType")) null else json.optString("handlerType"),
+            cursor = parseSlot(json.getJSONObject("cursor")),
+            slots = slots,
+            playerStart = json.getInt("playerStart"),
+            hotbarStart = json.getInt("hotbarStart"),
+            armorStart = json.getInt("armorStart"),
+            offhandIndex = json.getInt("offhandIndex")
+        )
+    }
+
+    /**
+     * Clicks an inventory slot, exactly as a mouse would.
+     *
+     * [syncId] comes from the [ContainerState] the click was aimed at, not from
+     * whatever is current — it's a staleness check, and the mod refuses the
+     * click if the open handler has changed underneath. Without it, closing a
+     * chest at the wrong moment would apply the click to the same-numbered slot
+     * of the player's inventory.
+     *
+     * [action] is a `SlotActionType` name: `PICKUP` (a plain click — take,
+     * place, or swap), `QUICK_MOVE` (shift-click), `THROW`, `SWAP`, `CLONE`,
+     * `PICKUP_ALL`.
+     *
+     * [button] is the mouse button for `PICKUP` (0 left, 1 right — right takes
+     * or places half), and for `SWAP` it's the destination hotbar slot.
+     */
+    fun sendSlotClick(syncId: Int, slotId: Int, button: Int = 0, action: String = "PICKUP") =
+        sendCommand("SLOT:$syncId,$slotId,$button,$action")
 
     /**
      * Says [message] in game, as the player. A leading `/` makes it a command;
