@@ -263,6 +263,7 @@ fun HudContent(
                 offhandSlot = state.offhand.takeIf { settings.isVisible(HudElement.OFFHAND) },
                 offhandBitmap = iconProvider?.getIcon(HudIcon.HOTBAR_OFFHAND),
                 offhandOverflowsBelow = offhandOverflowsBelow,
+                glintTexture = iconProvider?.getIcon(HudIcon.ENCHANTED_GLINT),
                 fontSheet = fontSheet,
                 onSlotClick = { slot -> hudRepository.sendCommand(slot.toString()) },
                 // Tapping the box trades the held item with whatever is in the
