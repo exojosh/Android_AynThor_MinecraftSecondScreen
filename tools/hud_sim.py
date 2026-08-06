@@ -103,6 +103,13 @@ SCENARIOS = {
     "half-heart": {"health": 19.0},
     "drowning": {"air": 130, "maxAir": 300},
     "drowning-low": {"air": 40, "maxAir": 300},
+    # Vanilla draws no armor bar at 0, so neither does this -- but the row's
+    # height stays reserved, or everything below it would jump 25dp the moment
+    # a chestplate went on. The pair below is the check for that: the hearts
+    # must sit at the same y in both.
+    "no-armor": {"armor": 0},
+    # ...and the bubbles have to stay hard right with the sockets gone.
+    "no-armor-drowning": {"armor": 0, "air": 130, "maxAir": 300},
     "reduced-max": {"health": 6.0, "maxHealth": 12.0},
     "dead": {"health": 0.0},
     # The off-hand box stays on screen empty -- unlike vanilla, which hides it
@@ -197,6 +204,43 @@ def fake_map_png():
     return base64.b64encode(png).decode("ascii")
 
 
+# A representative slice of what KeyBindingCatalog sends: enough categories to
+# exercise the picker's grouping, one unbound entry, and one from a "mod" so the
+# fact that the list is data rather than a hardcoded table is actually visible.
+BINDINGS = [
+    {"id": "key.attack", "label": "Attack/Destroy", "category": "Gameplay",
+     "boundKey": "Left Button", "unbound": False},
+    {"id": "key.use", "label": "Use Item/Place Block", "category": "Gameplay",
+     "boundKey": "Right Button", "unbound": False},
+    {"id": "key.pickItem", "label": "Pick Block", "category": "Gameplay",
+     "boundKey": "Middle Button", "unbound": False},
+    {"id": "key.drop", "label": "Drop Selected Item", "category": "Inventory",
+     "boundKey": "Q", "unbound": False},
+    {"id": "key.inventory", "label": "Open/Close Inventory", "category": "Inventory",
+     "boundKey": "E", "unbound": False},
+    {"id": "key.swapOffhand", "label": "Swap Item With Offhand", "category": "Inventory",
+     "boundKey": "F", "unbound": False},
+    {"id": "key.hotbar.1", "label": "Hotbar Slot 1", "category": "Inventory",
+     "boundKey": "1", "unbound": False},
+    {"id": "key.jump", "label": "Jump", "category": "Movement",
+     "boundKey": "Space", "unbound": False},
+    {"id": "key.sneak", "label": "Sneak", "category": "Movement",
+     "boundKey": "Left Shift", "unbound": False},
+    {"id": "key.sprint", "label": "Sprint", "category": "Movement",
+     "boundKey": "Left Control", "unbound": False},
+    {"id": "key.advancements", "label": "Advancements", "category": "Miscellaneous",
+     "boundKey": "L", "unbound": False},
+    {"id": "key.screenshot", "label": "Take Screenshot", "category": "Miscellaneous",
+     "boundKey": "F2", "unbound": False},
+    # The case worth seeing in the picker: usable from the second screen even
+    # though no key triggers it in game.
+    {"id": "key.spectatorOutlines", "label": "Highlight Players", "category": "Miscellaneous",
+     "boundKey": "Not bound", "unbound": True},
+    {"id": "key.examplemod.dash", "label": "Dash", "category": "Example Mod",
+     "boundKey": "V", "unbound": False},
+]
+
+
 def handle(conn, addr, assets, item_tex, state):
     print(f"[sim] client connected: {addr}")
     send_lock = threading.Lock()
@@ -205,10 +249,13 @@ def handle(conn, addr, assets, item_tex, state):
         with send_lock:
             conn.sendall((json.dumps(obj) + "\n").encode("utf-8"))
 
-    # Asset bundle first, as the mod does for each new connection.
+    # Asset bundle first, then the key bindings -- the order the mod pushes
+    # them to each new connection.
     for key, data in assets.items():
         send({"type": "asset", "assetId": key, "data": data})
     print(f"[sim] sent {len(assets)} assets")
+    send({"type": "bindings", "bindings": BINDINGS})
+    print(f"[sim] sent {len(BINDINGS)} key bindings")
 
     stop = threading.Event()
 
@@ -234,6 +281,8 @@ def handle(conn, addr, assets, item_tex, state):
                 elif cmd == "ASSETS":
                     for k, d in assets.items():
                         send({"type": "asset", "assetId": k, "data": d})
+                elif cmd == "BINDINGS":
+                    send({"type": "bindings", "bindings": BINDINGS})
         stop.set()
 
     threading.Thread(target=reader, daemon=True).start()

@@ -15,68 +15,142 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.exojosh.minecraftsecondscreen.net.GameBinding
 import com.exojosh.minecraftsecondscreen.settings.HudElement
 import com.exojosh.minecraftsecondscreen.settings.HudSettings
+import com.exojosh.minecraftsecondscreen.settings.INPUT_SLOT_COUNT
+import com.exojosh.minecraftsecondscreen.settings.InputSettings
 
 private val ROW_BACKGROUND = Color.Black.copy(alpha = 0.35f)
+private val SECONDARY_TEXT = Color(0xFF9A9A9A)
+private val DIM_TEXT = Color(0xFF777777)
+private val UNBOUND_TEXT = Color(0xFFD08A3A)
 
 /**
- * The Settings tab: which HUD elements are on screen.
+ * The Settings tab: what the second screen shows, and what its buttons do.
  *
- * Deliberately visibility-only rather than drag-to-place. The status rows all
- * share one alignment grid (see `STATUS_ICON_SIZE`/`STATUS_ICON_COUNT` in
- * [HudScreen]), and free placement would either break that grid or need a
- * layout engine to preserve it -- for a fraction of the value. Hiding the
- * elements you don't care about is most of what "customisable" means here.
+ * HUD placement is deliberately visibility-only rather than drag-to-place. The
+ * status rows all share one alignment grid (see `STATUS_ICON_SIZE`/
+ * `STATUS_ICON_COUNT` in [HudScreen]), and free placement would either break
+ * that grid or need a layout engine to preserve it — for a fraction of the
+ * value. Hiding the elements you don't care about is most of what
+ * "customisable" means here.
  *
- * Changes apply instantly: [HudSettings] holds its state in a Compose state
- * map, so the HUD above this panel recomposes as each switch is flipped, and
- * the player can see what they're turning off while they turn it off.
+ * Changes apply instantly: [HudSettings] and [InputSettings] both hold their
+ * state in Compose state containers, so the HUD above this panel recomposes as
+ * each switch is flipped and the player can see what they're turning off while
+ * they turn it off.
+ *
+ * **The binding picker replaces this panel rather than opening a dialog.** A
+ * Compose `Dialog` creates its own window, and this whole tree lives inside a
+ * `Presentation` whose window already sits outside the normal Activity
+ * hierarchy — swapping the panel's content keeps everything in one window and
+ * one lifecycle, with nothing extra to wire up.
  */
 @Composable
-fun SettingsScreen(settings: HudSettings) {
-    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column {
-                Text(
-                    text = "Show on this screen",
-                    color = Color.White,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold
-                )
+fun SettingsScreen(
+    settings: HudSettings,
+    inputSettings: InputSettings,
+    bindings: List<GameBinding>,
+    onRequestBindings: () -> Unit
+) {
+    var pickingSlot by remember { mutableStateOf<Int?>(null) }
+
+    // Re-ask on open: a player who rebinds a key in game pushes nothing, so
+    // the key names in a list received at connect time can be stale. Ids can't
+    // be, which is why this is a nicety rather than a correctness fix.
+    LaunchedEffect(pickingSlot) {
+        if (pickingSlot != null) onRequestBindings()
+    }
+
+    val slot = pickingSlot
+    if (slot != null) {
+        BindingPicker(
+            slotIndex = slot,
+            bindings = bindings,
+            onPick = { bindingId ->
+                inputSettings.setBindingAt(slot, bindingId)
+                pickingSlot = null
+            },
+            onCancel = { pickingSlot = null }
+        )
+        return
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        item {
+            SectionHeader(
+                title = "Show on this screen",
                 // Says where a switched-off element goes. Without this the
                 // toggle reads as "hide", and nobody would guess the element
                 // reappears in the game itself.
-                Text(
-                    text = "Anything switched off goes back to the game's HUD on the top screen",
-                    color = Color(0xFF9A9A9A),
-                    fontSize = 11.sp
-                )
-            }
-            if (!settings.isDefault) {
-                TextButton(onClick = { settings.resetToDefaults() }) {
-                    Text("Reset", color = Color(0xFFBBBBBB))
-                }
-            }
+                subtitle = "Anything switched off goes back to the game's HUD on the top screen",
+                onReset = if (settings.isDefault) null else settings::resetToDefaults
+            )
         }
 
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            items(HudElement.entries) { element ->
-                ElementToggle(
-                    element = element,
-                    checked = settings.isVisible(element),
-                    onToggle = { settings.toggle(element) }
-                )
+        items(HudElement.entries) { element ->
+            ElementToggle(
+                element = element,
+                checked = settings.isVisible(element),
+                onToggle = { settings.toggle(element) }
+            )
+        }
+
+        item {
+            SectionHeader(
+                title = "Input buttons",
+                subtitle = "What each button on the Input tab presses",
+                onReset = if (inputSettings.isDefault) null else inputSettings::resetToDefaults
+            )
+        }
+
+        items((0 until INPUT_SLOT_COUNT).toList()) { index ->
+            InputSlotRow(
+                index = index,
+                binding = inputSettings.bindingAt(index)?.let { id ->
+                    bindings.firstOrNull { it.id == id } ?: GameBinding(
+                        id = id,
+                        label = id,
+                        category = "",
+                        boundKey = "",
+                        unbound = false
+                    )
+                },
+                onClick = { pickingSlot = index }
+            )
+        }
+    }
+}
+
+@Composable
+private fun SectionHeader(title: String, subtitle: String, onReset: (() -> Unit)?) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text(text = subtitle, color = SECONDARY_TEXT, fontSize = 11.sp)
+        }
+        if (onReset != null) {
+            TextButton(onClick = onReset) {
+                Text("Reset", color = Color(0xFFBBBBBB))
             }
         }
     }
@@ -104,7 +178,7 @@ private fun ElementToggle(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(text = element.label, color = Color.White, fontSize = 14.sp)
-            Text(text = element.description, color = Color(0xFF9A9A9A), fontSize = 11.sp)
+            Text(text = element.description, color = SECONDARY_TEXT, fontSize = 11.sp)
         }
         Switch(
             checked = checked,
@@ -116,5 +190,147 @@ private fun ElementToggle(
                 checkedTrackColor = Color(0xFF5B8A3A)
             )
         )
+    }
+}
+
+/**
+ * One grid slot. Numbered 1..9 left-to-right, top-to-bottom, matching how the
+ * Input tab reads.
+ *
+ * The bound key is shown beside the action because it's the thing that makes
+ * the row identifiable at a glance — and because seeing it here is how a
+ * player notices the action they picked is unbound in game, which is the one
+ * case where this button is the only way to trigger it.
+ */
+@Composable
+private fun InputSlotRow(index: Int, binding: GameBinding?, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ROW_BACKGROUND)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "Button ${index + 1}",
+            color = SECONDARY_TEXT,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(end = 12.dp)
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = binding?.label ?: "Empty",
+                color = if (binding == null) DIM_TEXT else Color.White,
+                fontSize = 14.sp
+            )
+            if (binding != null && binding.boundKey.isNotEmpty()) {
+                Text(
+                    text = if (binding.unbound) "Not bound to a key in game" else binding.boundKey,
+                    color = if (binding.unbound) UNBOUND_TEXT else SECONDARY_TEXT,
+                    fontSize = 11.sp
+                )
+            }
+        }
+        Text(text = "Change", color = Color(0xFFBBBBBB), fontSize = 12.sp)
+    }
+}
+
+/**
+ * Pick a key binding for one grid slot.
+ *
+ * The list is whatever the game reported, grouped by its own control
+ * categories — including other mods' bindings, which arrive here for free
+ * because the mod enumerates `GameOptions.allKeys` rather than a list it
+ * maintains.
+ */
+@Composable
+private fun BindingPicker(
+    slotIndex: Int,
+    bindings: List<GameBinding>,
+    onPick: (String?) -> Unit,
+    onCancel: () -> Unit
+) {
+    val grouped = remember(bindings) { bindings.groupBy(GameBinding::category) }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Button ${slotIndex + 1}",
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                TextButton(onClick = onCancel) {
+                    Text("Cancel", color = Color(0xFFBBBBBB))
+                }
+            }
+        }
+
+        item {
+            PickerRow(title = "Empty", subtitle = "Leave this button blank") { onPick(null) }
+        }
+
+        if (bindings.isEmpty()) {
+            item {
+                Text(
+                    text = "No key bindings yet — they arrive when the game connects.",
+                    color = SECONDARY_TEXT,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(vertical = 12.dp)
+                )
+            }
+        }
+
+        grouped.forEach { (category, entries) ->
+            item {
+                Text(
+                    text = category,
+                    color = SECONDARY_TEXT,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(top = 10.dp, bottom = 2.dp)
+                )
+            }
+            items(entries) { binding ->
+                PickerRow(
+                    title = binding.label,
+                    subtitle = if (binding.unbound) "Not bound to a key" else binding.boundKey,
+                    subtitleColor = if (binding.unbound) UNBOUND_TEXT else SECONDARY_TEXT
+                ) { onPick(binding.id) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PickerRow(
+    title: String,
+    subtitle: String,
+    subtitleColor: Color = SECONDARY_TEXT,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ROW_BACKGROUND)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(text = title, color = Color.White, fontSize = 14.sp)
+        if (subtitle.isNotEmpty()) {
+            Text(text = subtitle, color = subtitleColor, fontSize = 12.sp)
+        }
     }
 }

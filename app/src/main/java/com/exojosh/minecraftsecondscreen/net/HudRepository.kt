@@ -73,6 +73,27 @@ data class MapTile(
     val playerPixelZ: Float get() = (playerZ - originZ).toFloat()
 }
 
+/**
+ * One of the game's key bindings, as the mod reports it.
+ *
+ * [id] is the binding's translation key (`key.inventory`) and is the only part
+ * that's a contract: it's what gets persisted into an input-grid slot and sent
+ * back as `BIND:<id>`. The rest is display text the mod has already translated,
+ * because only the game side has the language files.
+ *
+ * [boundKey] and [unbound] are a **snapshot** — a player rebinding a key
+ * mid-session won't push an update, so the printed key name can lag until the
+ * app re-requests the list. The ids don't go stale, so buttons keep working
+ * either way; only the label can be wrong.
+ */
+data class GameBinding(
+    val id: String,
+    val label: String,
+    val category: String,
+    val boundKey: String,
+    val unbound: Boolean
+)
+
 data class HudState(
     val health: Float,
     val maxHealth: Float,
@@ -120,6 +141,17 @@ class HudRepository(private val scope: CoroutineScope) {
 
     private val _mapTile = MutableStateFlow<MapTile?>(null)
     val mapTile: StateFlow<MapTile?> = _mapTile.asStateFlow()
+
+    /**
+     * Every key binding the game has, pushed by the mod on connect.
+     *
+     * Deliberately **not** cleared on disconnect, for the same reason
+     * [assetCache] isn't: the mod re-sends the whole list on reconnect, and
+     * keeping the old copy means the input grid keeps its labels through a
+     * game restart instead of flashing back to raw binding ids.
+     */
+    private val _bindings = MutableStateFlow<List<GameBinding>>(emptyList())
+    val bindings: StateFlow<List<GameBinding>> = _bindings.asStateFlow()
 
     /** Item id -> decoded icon bitmap. mutableStateMapOf so Compose recomposes
      *  automatically the moment a requested icon arrives -- no manual refresh needed. */
@@ -245,6 +277,7 @@ class HudRepository(private val scope: CoroutineScope) {
                 "icon" -> handleIconResponse(json)
                 "asset" -> handleAssetResponse(json)
                 "map" -> handleMapResponse(json)
+                "bindings" -> handleBindingsResponse(json)
                 else -> handleHudState(json)
             }
         } catch (e: Exception) {
@@ -291,6 +324,45 @@ class HudRepository(private val scope: CoroutineScope) {
     /** Asks the mod to re-send the HUD texture bundle -- call after the
      *  player changes resource packs. New connections get it unprompted. */
     fun requestAssets() = sendCommand("ASSETS")
+
+    /**
+     * The game's key bindings, replacing the list wholesale.
+     *
+     * Always the full set, never a delta: the picker is built straight from
+     * this, and a partial list would read as "that action doesn't exist"
+     * rather than as an error anyone would notice.
+     */
+    private fun handleBindingsResponse(json: JSONObject) {
+        val array = json.optJSONArray("bindings") ?: return
+        _bindings.value = buildList {
+            for (i in 0 until array.length()) {
+                val entry = array.getJSONObject(i)
+                add(
+                    GameBinding(
+                        id = entry.getString("id"),
+                        label = entry.optString("label").ifEmpty { entry.getString("id") },
+                        category = entry.optString("category"),
+                        boundKey = entry.optString("boundKey"),
+                        unbound = entry.optBoolean("unbound", false)
+                    )
+                )
+            }
+        }
+        Log.i(TAG, "Received ${_bindings.value.size} key bindings")
+    }
+
+    /** Asks the mod to re-send the key bindings -- worth doing whenever the
+     *  picker opens, since a rebind in game pushes nothing on its own. */
+    fun requestBindings() = sendCommand("BINDINGS")
+
+    /**
+     * Presses a key binding by id, the form the configurable input grid uses.
+     *
+     * Prefer this over the fixed action codes: the id came from the mod's own
+     * binding list, so there's no table on either side that can drift, and
+     * other mods' bindings work with no entry anywhere.
+     */
+    fun sendBinding(bindingId: String) = sendCommand("BIND:$bindingId")
 
     /**
      * Tells the mod which HUD elements the *game* should draw on the main

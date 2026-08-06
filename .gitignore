@@ -19,3 +19,8 @@ local.properties
 # Not redistributable under Mojang's EULA, so they stay local-only.
 # See CLAUDE.md "Required local assets" for what to drop in and where.
 app/src/main/assets/minecraft/
+
+# The client jar hud_sim.py reads its textures out of. tools/README.md tells you
+# to `adb pull` it to exactly this path, so it lands in the working tree by
+# following the instructions -- and it's ~30MB of Mojang assets, in a public repo.
+tools/*.jar

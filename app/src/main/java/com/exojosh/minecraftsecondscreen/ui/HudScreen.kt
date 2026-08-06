@@ -86,13 +86,19 @@ private const val OFFHAND_SWAP_COMMAND = "SWAP"
  * background or fill the screen: [com.exojosh.minecraftsecondscreen.SecondScreenApp]
  * owns the tiled backdrop for the whole window, and having this fill too meant
  * the dirt was drawn twice, once over the other.
+ *
+ * [offhandOverflowsBelow] lets the off-hand box hang past the bottom of that
+ * wrapped height instead of extending it, handing the row it would have cost
+ * to the panel underneath. The caller decides, because only the caller knows
+ * what's in that corner of the panel.
  */
 @Composable
 fun HudScreen(
     state: HudState?,
     hudRepository: HudRepository,
     settings: HudSettings,
-    iconProvider: ResourcePackIconProvider? = null
+    iconProvider: ResourcePackIconProvider? = null,
+    offhandOverflowsBelow: Boolean = false
 ) {
     if (state == null) {
         Box(
@@ -110,7 +116,8 @@ fun HudScreen(
         state = state,
         hudRepository = hudRepository,
         settings = settings,
-        iconProvider = iconProvider
+        iconProvider = iconProvider,
+        offhandOverflowsBelow = offhandOverflowsBelow
     )
 }
 
@@ -119,7 +126,8 @@ fun HudContent(
     state: HudState,
     hudRepository: HudRepository,
     settings: HudSettings,
-    iconProvider: ResourcePackIconProvider?
+    iconProvider: ResourcePackIconProvider?,
+    offhandOverflowsBelow: Boolean = false
 ) {
     val fontSheet = rememberMinecraftFont(iconProvider?.getFontSheet())
 
@@ -145,12 +153,24 @@ fun HudContent(
         // fine while it was always drawn, but now that it can be switched off
         // the row would collapse and re-expand every time the player dipped
         // underwater, dragging everything below it up and down.
+        //
+        // The row itself is drawn even when *both* halves are empty, which is
+        // why the armor test below is on the icons rather than on the row: an
+        // unarmoured player picking up a chestplate should see the sockets
+        // appear in place, not see the whole HUD jump up 25dp and the map
+        // below it resize. Vanilla gets that for free by anchoring its HUD to
+        // the bottom of the screen; this stack is top-anchored, so the space
+        // has to be held open deliberately.
         if (showArmor || showBubbles) {
             Row(
                 modifier = Modifier.fillMaxWidth().height(STATUS_ICON_SIZE),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                if (showArmor) {
+                // Vanilla wraps renderArmor in `if (j > 0)`, so an unarmoured
+                // player never sees a row of empty sockets in game -- drawing
+                // them here made the second screen show something the top
+                // screen wouldn't.
+                if (showArmor && state.armor > 0) {
                     IconRow(
                         currentPoints = state.armor,
                         maxPoints = 20,
@@ -242,6 +262,7 @@ fun HudContent(
                 selectionBitmap = iconProvider?.getIcon(HudIcon.HOTBAR_SELECTION),
                 offhandSlot = state.offhand.takeIf { settings.isVisible(HudElement.OFFHAND) },
                 offhandBitmap = iconProvider?.getIcon(HudIcon.HOTBAR_OFFHAND),
+                offhandOverflowsBelow = offhandOverflowsBelow,
                 fontSheet = fontSheet,
                 onSlotClick = { slot -> hudRepository.sendCommand(slot.toString()) },
                 // Tapping the box trades the held item with whatever is in the
