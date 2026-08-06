@@ -131,10 +131,16 @@ fun HudContent(
 ) {
     val fontSheet = rememberMinecraftFont(iconProvider?.getFontSheet())
 
-    val showArmor = settings.isVisible(HudElement.ARMOR)
-    val showBubbles = settings.isVisible(HudElement.BUBBLES)
-    val showHearts = settings.isVisible(HudElement.HEARTS)
-    val showHunger = settings.isVisible(HudElement.HUNGER)
+    // Vanilla draws none of the status bars outside survival-like modes
+    // (ClientPlayerInteractionManager.hasStatusBars), so neither does this --
+    // the second screen was showing a creative player full hearts, hunger and
+    // an XP bar that the top screen deliberately omits.
+    val statusBars = state.hasStatusBars
+
+    val showArmor = statusBars && settings.isVisible(HudElement.ARMOR)
+    val showBubbles = statusBars && settings.isVisible(HudElement.BUBBLES)
+    val showHearts = statusBars && settings.isVisible(HudElement.HEARTS)
+    val showHunger = statusBars && settings.isVisible(HudElement.HUNGER)
 
     Column(
         modifier = Modifier
@@ -211,15 +217,16 @@ fun HudContent(
                 verticalAlignment = Alignment.Bottom
             ) {
                 if (showHearts) {
+                    val hearts = heartSprites(state.heartType, state.hardcore)
                     HeartRow(
                         health = state.health,
                         maxHealth = state.maxHealth,
                         absorption = state.absorption,
-                        fullIcon = iconProvider?.getIcon(HudIcon.HEART_FULL),
-                        halfIcon = iconProvider?.getIcon(HudIcon.HEART_HALF),
-                        containerIcon = iconProvider?.getIcon(HudIcon.HEART_CONTAINER),
-                        absorbFullIcon = iconProvider?.getIcon(HudIcon.HEART_ABSORBING_FULL),
-                        absorbHalfIcon = iconProvider?.getIcon(HudIcon.HEART_ABSORBING_HALF)
+                        fullIcon = iconProvider?.getIcon(hearts.full),
+                        halfIcon = iconProvider?.getIcon(hearts.half),
+                        containerIcon = iconProvider?.getIcon(hearts.container),
+                        absorbFullIcon = iconProvider?.getIcon(hearts.absorbFull),
+                        absorbHalfIcon = iconProvider?.getIcon(hearts.absorbHalf)
                     )
                 }
 
@@ -240,7 +247,7 @@ fun HudContent(
             }
         }
 
-        if (settings.isVisible(HudElement.XP_BAR)) {
+        if (statusBars && settings.isVisible(HudElement.XP_BAR)) {
             XpBar(
                 level = state.xpLevel,
                 progress = state.xpProgress,
@@ -254,7 +261,9 @@ fun HudContent(
         // off-hand is drawn by HotbarRow, so hiding the hotbar necessarily
         // hides it too -- said plainly in HudElement.HOTBAR's description
         // rather than left for the player to discover.
-        if (settings.isVisible(HudElement.HOTBAR)) {
+        // A spectator has no hotbar in vanilla either -- there's nothing to
+        // select, and tapping a slot would send a keypress the game ignores.
+        if (!state.isSpectator && settings.isVisible(HudElement.HOTBAR)) {
             HotbarRow(
                 slots = state.hotbar,
                 selectedIndex = state.selectedSlot,
