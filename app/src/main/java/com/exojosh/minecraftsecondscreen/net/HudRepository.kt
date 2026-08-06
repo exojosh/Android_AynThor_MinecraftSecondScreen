@@ -189,6 +189,20 @@ data class HudState(
      *  raised by Respiration). Vanilla only shows bubbles while air < maxAir. */
     val air: Int,
     val maxAir: Int,
+    /**
+     * The game mode's own name, or null against an older mod build.
+     *
+     * Sent raw rather than reduced to "show the status bars", so the HUD
+     * decision stays on the side drawing the HUD — [hasStatusBars] applies
+     * vanilla's rule (`interactionManager.hasStatusBars()`, i.e. survival or
+     * adventure) and null defaults to *showing* them, which is what every build
+     * before this field did.
+     */
+    val gameMode: String? = null,
+    /** Which heart sprite set applies: NORMAL, POISONED, WITHERED or FROZEN. */
+    val heartType: String = "NORMAL",
+    /** Hardcore worlds use a different rim on every heart sprite. */
+    val hardcore: Boolean = false,
     val hotbar: List<HotbarSlot>,
     /** What's in the off-hand, or null against a mod build that predates the
      *  field. Null hides the off-hand box entirely; an *empty* off-hand comes
@@ -197,6 +211,15 @@ data class HudState(
     val offhand: HotbarSlot? = null
 ) {
     val isDrowning: Boolean get() = maxAir > 0 && air < maxAir
+
+    /** Vanilla hides hearts, hunger, armor, bubbles and the XP bar outside
+     *  survival-like modes (`ClientPlayerInteractionManager.hasStatusBars`).
+     *  Unknown means show them — that's what every build before this did. */
+    val hasStatusBars: Boolean
+        get() = gameMode == null || gameMode == "SURVIVAL" || gameMode == "ADVENTURE"
+
+    /** Vanilla draws no hotbar for a spectator either. */
+    val isSpectator: Boolean get() = gameMode == "SPECTATOR"
 }
 
 /**
@@ -752,6 +775,11 @@ class HudRepository(private val scope: CoroutineScope) {
             // drowning", which hides the bubbles.
             air = json.optInt("air", 0),
             maxAir = json.optInt("maxAir", 0),
+            // Optional so a newer app still runs against an older mod build;
+            // the defaults reproduce exactly what that build's HUD looked like.
+            gameMode = if (json.isNull("gameMode")) null else json.optString("gameMode").ifEmpty { null },
+            heartType = json.optString("heartType").ifEmpty { "NORMAL" },
+            hardcore = json.optBoolean("hardcore", false),
             hotbar = hotbar,
             // Optional for the same reason: an older mod build doesn't send it,
             // and null means "don't draw the box" rather than "empty hand".

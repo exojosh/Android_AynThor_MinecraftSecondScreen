@@ -1,6 +1,61 @@
 package com.exojosh.minecraftsecondscreen.ui
 
+import com.exojosh.minecraftsecondscreen.net.HudIcon
 import kotlin.math.ceil
+
+/** The five sprites one heart row needs, for one player state. */
+data class HeartSprites(
+    val full: HudIcon,
+    val half: HudIcon,
+    val container: HudIcon,
+    val absorbFull: HudIcon,
+    val absorbHalf: HudIcon
+)
+
+/**
+ * Which heart sprites to draw, from the mod's `heartType` and `hardcore`.
+ *
+ * Two independent axes, exactly as vanilla has them: the *set* comes from the
+ * player's status effects (`InGameHud.HeartType.fromPlayerState`) and the
+ * hardcore variant of that set comes from the world. Absorption hearts follow
+ * the hardcore axis but not the status one — vanilla keeps them golden through
+ * poison and freezing, and swaps them only for wither.
+ *
+ * Anything unrecognised falls back to the normal set rather than drawing
+ * nothing, so a future heart type from a newer game version degrades to a
+ * plain red heart instead of an empty row.
+ */
+fun heartSprites(heartType: String, hardcore: Boolean): HeartSprites = when {
+    hardcore -> when (heartType) {
+        "POISONED" -> hardcoreSet(HudIcon.HEART_POISONED_HARDCORE_FULL, HudIcon.HEART_POISONED_HARDCORE_HALF)
+        "WITHERED" -> hardcoreSet(HudIcon.HEART_WITHERED_HARDCORE_FULL, HudIcon.HEART_WITHERED_HARDCORE_HALF)
+        "FROZEN" -> hardcoreSet(HudIcon.HEART_FROZEN_HARDCORE_FULL, HudIcon.HEART_FROZEN_HARDCORE_HALF)
+        else -> hardcoreSet(HudIcon.HEART_HARDCORE_FULL, HudIcon.HEART_HARDCORE_HALF)
+    }
+
+    else -> when (heartType) {
+        "POISONED" -> normalSet(HudIcon.HEART_POISONED_FULL, HudIcon.HEART_POISONED_HALF)
+        "WITHERED" -> normalSet(HudIcon.HEART_WITHERED_FULL, HudIcon.HEART_WITHERED_HALF)
+        "FROZEN" -> normalSet(HudIcon.HEART_FROZEN_FULL, HudIcon.HEART_FROZEN_HALF)
+        else -> normalSet(HudIcon.HEART_FULL, HudIcon.HEART_HALF)
+    }
+}
+
+private fun normalSet(full: HudIcon, half: HudIcon) = HeartSprites(
+    full = full,
+    half = half,
+    container = HudIcon.HEART_CONTAINER,
+    absorbFull = HudIcon.HEART_ABSORBING_FULL,
+    absorbHalf = HudIcon.HEART_ABSORBING_HALF
+)
+
+private fun hardcoreSet(full: HudIcon, half: HudIcon) = HeartSprites(
+    full = full,
+    half = half,
+    container = HudIcon.HEART_CONTAINER_HARDCORE,
+    absorbFull = HudIcon.HEART_ABSORBING_HARDCORE_FULL,
+    absorbHalf = HudIcon.HEART_ABSORBING_HARDCORE_HALF
+)
 
 /**
  * Which sprite a heart slot draws on top of its container.
