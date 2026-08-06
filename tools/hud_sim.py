@@ -42,6 +42,10 @@ ASSETS = {
     "hotbar": "textures/gui/sprites/hud/hotbar.png",
     "hotbar_selection": "textures/gui/sprites/hud/hotbar_selection.png",
     "hotbar_offhand_right": "textures/gui/sprites/hud/hotbar_offhand_right.png",
+    # The enchantment shimmer the app scrolls over glinted items. Not a hud/
+    # sprite -- it lives under textures/misc/ -- but it comes down the same
+    # asset channel.
+    "enchanted_glint_item": "textures/misc/enchanted_glint_item.png",
     "font_ascii": "textures/font/ascii.png",
     "background": "textures/block/dirt.png",
     "map_background": "textures/map/map_background.png",

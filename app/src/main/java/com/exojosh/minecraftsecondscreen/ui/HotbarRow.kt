@@ -21,7 +21,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
@@ -120,10 +119,9 @@ private fun Modifier.hangingBelow(enabled: Boolean): Modifier =
  * [offhandOverflowsBelow] makes that extra row cost no layout height; see
  * [hangingBelow] for when that's safe.
  *
- * Enchantment glint is a static translucent overlay rather than vanilla's
- * animated diagonal shimmer -- visually communicates "enchanted" with far
- * less machinery and no animation loop. Worth revisiting with a real shader
- * if it reads as too subtle in practice.
+ * Enchantment glint is vanilla's own scrolling shimmer, drawn by [ItemGlint]
+ * and masked to the item's alpha -- see there for why it's done here rather
+ * than baked into the icon the mod sends.
  */
 @Composable
 fun HotbarRow(
@@ -134,6 +132,9 @@ fun HotbarRow(
     offhandSlot: HotbarSlot? = null,
     offhandBitmap: Bitmap? = null,
     offhandOverflowsBelow: Boolean = false,
+    /** Vanilla's `enchanted_glint_item.png`, drawn over enchanted items by
+     *  [ItemGlint]. Null simply means no glint is drawn. */
+    glintTexture: Bitmap? = null,
     fontSheet: MinecraftFontSheet? = null,
     modifier: Modifier = Modifier,
     onSlotClick: (Int) -> Unit = {},
@@ -151,6 +152,7 @@ fun HotbarRow(
                         icon = itemIcon(slot.itemId),
                         isSelected = index == selectedIndex,
                         fontSheet = fontSheet,
+                        glintTexture = glintTexture,
                         onClick = { onSlotClick(index + 1) }
                     )
                 }
@@ -162,6 +164,7 @@ fun HotbarRow(
                         icon = itemIcon(offhandSlot.itemId),
                         isSelected = false,
                         fontSheet = fontSheet,
+                        glintTexture = glintTexture,
                         onClick = onOffhandClick
                     )
                 }
@@ -221,6 +224,7 @@ fun HotbarRow(
                                 slot = slot,
                                 icon = itemIcon(slot.itemId),
                                 fontSheet = fontSheet,
+                                glintTexture = glintTexture,
                                 unit = unit
                             )
                         }
@@ -244,6 +248,7 @@ fun HotbarRow(
                         icon = itemIcon(offhandSlot.itemId),
                         boxBitmap = offhandBitmap,
                         fontSheet = fontSheet,
+                        glintTexture = glintTexture,
                         unit = unit,
                         onClick = onOffhandClick
                     )
@@ -266,6 +271,7 @@ private fun BoxScope.OffhandBox(
     icon: Bitmap?,
     boxBitmap: Bitmap?,
     fontSheet: MinecraftFontSheet?,
+    glintTexture: Bitmap?,
     unit: Dp,
     onClick: () -> Unit
 ) {
@@ -296,7 +302,13 @@ private fun BoxScope.OffhandBox(
         contentAlignment = Alignment.Center
     ) {
         Box(modifier = Modifier.size(unit * ICON_SIZE)) {
-            HotbarSlotContent(slot = slot, icon = icon, fontSheet = fontSheet, unit = unit)
+            HotbarSlotContent(
+                slot = slot,
+                icon = icon,
+                fontSheet = fontSheet,
+                glintTexture = glintTexture,
+                unit = unit
+            )
         }
     }
 }
@@ -307,6 +319,7 @@ private fun HotbarSlotView(
     icon: Bitmap?,
     isSelected: Boolean,
     fontSheet: MinecraftFontSheet?,
+    glintTexture: Bitmap?,
     onClick: () -> Unit
 ) {
     val size = 56.dp
@@ -325,6 +338,7 @@ private fun HotbarSlotView(
                 slot = slot,
                 icon = icon,
                 fontSheet = fontSheet,
+                glintTexture = glintTexture,
                 unit = size * 0.75f / ICON_SIZE
             )
         }
@@ -341,6 +355,7 @@ private fun BoxScope.HotbarSlotContent(
     slot: HotbarSlot,
     icon: Bitmap?,
     fontSheet: MinecraftFontSheet?,
+    glintTexture: Bitmap?,
     unit: Dp
 ) {
     if (slot.itemId == "minecraft:air") return
@@ -356,19 +371,11 @@ private fun BoxScope.HotbarSlotContent(
     }
 
     if (slot.hasGlint) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.linearGradient(
-                        colors = listOf(
-                            Color(0x00FFFFFF),
-                            Color(0x559B6BFF), // translucent purple, matches vanilla's
-                            Color(0x00FFFFFF)  // enchant-glint hue without animating it
-                        )
-                    )
-                )
-        )
+        // Vanilla's real glint: scrolling, additive, and masked to the item's
+        // own alpha. It replaced a static translucent purple gradient across
+        // the whole box, which lit up the empty corners too and so read as a
+        // highlighted *slot* rather than an enchanted item.
+        ItemGlint(icon = icon, glintTexture = glintTexture)
     }
 
     slot.durabilityFraction?.let { fraction ->

@@ -73,7 +73,13 @@ enum class HudIcon(val assetKey: String, val candidateNames: List<String>) {
     // with the right edge. The *right* variant, because its 8 blank columns
     // fall on the left -- right-aligning the left variant would inset the cell
     // from the screen edge by those 8 columns.
-    HOTBAR_OFFHAND("hotbar_offhand_right", listOf("hotbar_offhand_right.png", "hotbar_offhand_right.webp"));
+    HOTBAR_OFFHAND("hotbar_offhand_right", listOf("hotbar_offhand_right.png", "hotbar_offhand_right.webp")),
+
+    // The enchantment shimmer, 128x128. Not a hud/ sprite -- it lives under
+    // textures/misc/ -- so the legacy bundled-fallback path can't reach it and
+    // the candidate list is empty. Socket or nothing, which is fine: without it
+    // [ItemGlint] draws no glint and the item still renders correctly.
+    ENCHANTED_GLINT("enchanted_glint_item", emptyList());
 
     companion object {
         /** Not under the hud/ sprite dir, so they're socket-or-nothing on the
