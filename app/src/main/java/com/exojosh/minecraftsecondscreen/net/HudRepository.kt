@@ -383,6 +383,7 @@ class HudRepository(private val scope: CoroutineScope) {
                 "bindings" -> handleBindingsResponse(json)
                 "chat" -> handleChatResponse(json)
                 "container" -> handleContainerResponse(json)
+                "noplayer" -> handleNoPlayer()
                 else -> handleHudState(json)
             }
         } catch (e: Exception) {
@@ -486,6 +487,33 @@ class HudRepository(private val scope: CoroutineScope) {
 
         val message = ChatMessage(id = nextChatId++, segments = segments)
         _chatMessages.value = (_chatMessages.value + message).takeLast(CHAT_HISTORY_LIMIT)
+    }
+
+    /**
+     * The player left the world — main menu, world unloading, kicked.
+     *
+     * Everything player-shaped is dropped, which puts each tab back into the
+     * waiting state it already shows before the first snapshot arrives. The
+     * socket is still up, so [isConnected] stays true: the mod is running, it
+     * just has nothing to report. That distinction is the whole reason this is
+     * a message rather than the mod going quiet — silence is indistinguishable
+     * from a stalled game, and the second screen used to sit there displaying a
+     * frozen snapshot of wherever you last were.
+     *
+     * Assets and bindings are kept: they don't belong to a world, and the mod
+     * doesn't re-send them on re-entry.
+     */
+    private fun handleNoPlayer() {
+        Log.i(TAG, "Mod reports no player; waiting")
+        _hudState.value = null
+        _mapTile.value = null
+        _container.value = null
+        // Vanilla clears chat on disconnect and the mod drops its backlog to
+        // match, so holding ours would strand the previous world's messages
+        // with nothing behind them.
+        _chatMessages.value = emptyList()
+        pendingIconRequests.clear()
+        failedIconRequests.clear()
     }
 
     /**

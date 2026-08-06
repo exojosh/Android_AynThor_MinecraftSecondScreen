@@ -122,6 +122,11 @@ SCENARIOS = {
     # No "offhand" key at all: what an older mod build sends. The box should
     # disappear entirely rather than draw an empty one.
     "offhand-absent": {"offhand": None},
+    # Streams normally, then says the player is gone and keeps the socket open
+    # -- i.e. quit to title, not quit the game. The app must fall back to its
+    # waiting states rather than freezing on the last snapshot, and must NOT
+    # show "not connected", because the mod is still right there.
+    "leave-world": {"__leave_after": 8.0},
 }
 
 
@@ -338,8 +343,23 @@ def handle(conn, addr, assets, item_tex, state):
     walk = 0.0
     ticks = 0
 
+    # "quit to title": stop describing a player, but stay connected. The app
+    # has to tell that apart from a disconnect, which is the whole reason the
+    # mod sends a message instead of just going quiet.
+    leave_after = state.pop("__leave_after", None)
+    started = time.time()
+    left = False
+
     try:
         while not stop.is_set():
+            if leave_after is not None and not left and time.time() - started >= leave_after:
+                send({"type": "noplayer"})
+                print("[sim] sent noplayer; holding the socket open")
+                left = True
+            if left:
+                time.sleep(0.5)
+                continue
+
             send(state)
 
             # A message every ~10s, so the log's live behaviour -- following the
