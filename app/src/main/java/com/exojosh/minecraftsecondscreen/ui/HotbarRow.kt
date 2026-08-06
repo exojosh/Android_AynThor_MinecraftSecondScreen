@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -87,11 +88,37 @@ private const val OFFHAND_CELL_INSET_X = 8f
 private const val OFFHAND_CELL_INSET_Y = 2f
 
 /**
+ * Measures and places the off-hand box at full size but reports **zero height**
+ * to the parent, so it hangs below the hotbar without pushing anything down.
+ *
+ * The box is a whole extra line -- 24 of the hotbar's own 22 logical pixels --
+ * and it's a small cell hard against the right edge, so charging the entire
+ * width of the layout for it wastes a band of screen that is empty either side
+ * of it. Whatever sits under the hotbar gets that band back and the box floats
+ * over it.
+ *
+ * Only safe where the panel underneath has nothing in that corner: see
+ * [com.exojosh.minecraftsecondscreen.SecondScreenApp], which enables it for the
+ * map (square, centred, nowhere near the right edge) and not for the tabs whose
+ * content runs the full width. Compose neither clips the overflow nor lets the
+ * panel steal the box's taps -- the panel draws nothing there and has no
+ * pointer input of its own, so hit testing falls through to the box.
+ */
+private fun Modifier.hangingBelow(enabled: Boolean): Modifier =
+    if (!enabled) this else layout { measurable, constraints ->
+        val placeable = measurable.measure(constraints)
+        layout(placeable.width, 0) { placeable.place(0, 0) }
+    }
+
+/**
  * The 9 hotbar slots, laid out over vanilla's hotbar sprite and scaled to fill
  * whatever width it's given, with the off-hand box on its own line underneath.
  *
  * The strip always gets the full width -- [offhandSlot] adds a row rather than
  * stealing horizontal space, so the slots stay as large as they've ever been.
+ *
+ * [offhandOverflowsBelow] makes that extra row cost no layout height; see
+ * [hangingBelow] for when that's safe.
  *
  * Enchantment glint is a static translucent overlay rather than vanilla's
  * animated diagonal shimmer -- visually communicates "enchanted" with far
@@ -106,6 +133,7 @@ fun HotbarRow(
     selectionBitmap: Bitmap? = null,
     offhandSlot: HotbarSlot? = null,
     offhandBitmap: Bitmap? = null,
+    offhandOverflowsBelow: Boolean = false,
     fontSheet: MinecraftFontSheet? = null,
     modifier: Modifier = Modifier,
     onSlotClick: (Int) -> Unit = {},
@@ -128,13 +156,15 @@ fun HotbarRow(
                 }
             }
             if (offhandSlot != null) {
-                HotbarSlotView(
-                    slot = offhandSlot,
-                    icon = itemIcon(offhandSlot.itemId),
-                    isSelected = false,
-                    fontSheet = fontSheet,
-                    onClick = onOffhandClick
-                )
+                Box(modifier = Modifier.hangingBelow(offhandOverflowsBelow)) {
+                    HotbarSlotView(
+                        slot = offhandSlot,
+                        icon = itemIcon(offhandSlot.itemId),
+                        isSelected = false,
+                        fontSheet = fontSheet,
+                        onClick = onOffhandClick
+                    )
+                }
             }
         }
         return
@@ -206,6 +236,7 @@ fun HotbarRow(
                 Box(
                     modifier = Modifier
                         .align(Alignment.End)
+                        .hangingBelow(offhandOverflowsBelow)
                         .size(width = unit * OFFHAND_WIDTH, height = unit * OFFHAND_HEIGHT)
                 ) {
                     OffhandBox(

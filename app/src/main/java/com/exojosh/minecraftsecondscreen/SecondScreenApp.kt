@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import com.exojosh.minecraftsecondscreen.net.HudRepository
 import com.exojosh.minecraftsecondscreen.net.ResourcePackIconProvider
 import com.exojosh.minecraftsecondscreen.ui.HudScreen
@@ -35,6 +36,7 @@ import com.exojosh.minecraftsecondscreen.ui.RepeatingTextureBackground
 import com.exojosh.minecraftsecondscreen.ui.SettingsScreen
 import com.exojosh.minecraftsecondscreen.settings.HudElement
 import com.exojosh.minecraftsecondscreen.settings.rememberHudSettings
+import com.exojosh.minecraftsecondscreen.settings.rememberInputSettings
 
 /**
  * Height reserved at the bottom for the tab strip.
@@ -72,8 +74,10 @@ fun SecondScreenApp(
     val hudState by hudRepository.hudState.collectAsState()
     val mapTile by hudRepository.mapTile.collectAsState()
     val isConnected by hudRepository.isConnected.collectAsState()
+    val bindings by hudRepository.bindings.collectAsState()
     var selectedTab by remember { mutableStateOf(SecondScreenTab.HUD) }
     val settings = rememberHudSettings()
+    val inputSettings = rememberInputSettings()
 
     // Anything switched off down here goes back to the game's own HUD on the
     // top screen, so an element is never simply lost -- between the two
@@ -105,12 +109,34 @@ fun SecondScreenApp(
                     .padding(bottom = TAB_STRIP_HEIGHT)
             ) {
                 // Always on top, on every tab. Wraps its own height.
-                HudScreen(
-                    state = hudState,
-                    hudRepository = hudRepository,
-                    settings = settings,
-                    iconProvider = iconProvider
-                )
+                //
+                // Raised above the panel because the off-hand box below can
+                // overhang into it (see offhandOverflowsBelow). Compose already
+                // routes taps in the overlap to the box -- the panel has no
+                // pointer input there -- so without this the box could be a tap
+                // target hidden under the map, which is worse than either
+                // drawing on top. The clearance is comfortable at any normal
+                // HUD height; this makes it not depend on that arithmetic.
+                Box(modifier = Modifier.zIndex(1f)) {
+                    HudScreen(
+                        state = hudState,
+                        hudRepository = hudRepository,
+                        settings = settings,
+                        iconProvider = iconProvider,
+                        // The off-hand box sits on its own line below the
+                        // hotbar, hard against the right edge, and it's only 29
+                        // of the hotbar's 182 logical pixels wide -- so charging
+                        // a full row of height for it leaves a wide empty band
+                        // on either side. On the HUD tab that row is given to
+                        // the panel and the box floats over it: the map sheet is
+                        // square, centred and height-bound, so it stays clear of
+                        // the corner the box occupies. The other two tabs lay
+                        // out content across the full width (the grid's
+                        // top-right button, Settings' "Reset"), and the box
+                        // would cover it and eat its taps.
+                        offhandOverflowsBelow = selectedTab == SecondScreenTab.HUD
+                    )
+                }
 
                 // Everything left over goes to the tab's panel.
                 Box(
@@ -126,10 +152,17 @@ fun SecondScreenApp(
                         )
 
                         SecondScreenTab.INPUT -> InputGridScreen(
-                            onSendCommand = hudRepository::sendCommand
+                            settings = inputSettings,
+                            bindings = bindings,
+                            onPressBinding = hudRepository::sendBinding
                         )
 
-                        SecondScreenTab.SETTINGS -> SettingsScreen(settings = settings)
+                        SecondScreenTab.SETTINGS -> SettingsScreen(
+                            settings = settings,
+                            inputSettings = inputSettings,
+                            bindings = bindings,
+                            onRequestBindings = hudRepository::requestBindings
+                        )
                     }
                 }
             }
