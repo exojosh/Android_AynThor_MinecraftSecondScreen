@@ -39,6 +39,15 @@ private const val ICON_FAILURE_RETRY_MS = 60_000L
  *  far as scrolling back on the top screen would. */
 private const val CHAT_HISTORY_LIMIT = 100
 
+/**
+ * How many connections may come and go without the mod ever identifying itself
+ * before we call it a port conflict.
+ *
+ * More than one, because a genuine mod restart can drop a connection mid-
+ * handshake; three in a row is not that.
+ */
+private const val SILENT_CONNECTIONS_BEFORE_SUSPECTING_CONFLICT = 3
+
 data class HotbarSlot(
     val itemId: String,
     val count: Int,
@@ -210,6 +219,29 @@ class HudRepository(private val scope: CoroutineScope) {
     private val _isConnected = MutableStateFlow(false)
     val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
 
+    /**
+     * Something is accepting connections on 48291, but it isn't the mod.
+     *
+     * This has a real cause worth naming: a leftover
+     * `adb reverse tcp:48291 tcp:48291` leaves **adbd** owning the port, and
+     * adbd accepts every connection and instantly drops it. From here that used
+     * to be indistinguishable from an ordinary flapping connection, so the
+     * second screen alternated "Not connected" with "Waiting for map data…" and
+     * said nothing about the actual problem — it looked exactly like a broken
+     * app update.
+     *
+     * Detected by absence of the mod's hello line rather than by timing, so it
+     * doesn't depend on how fast the other end drops us.
+     */
+    private val _portConflict = MutableStateFlow(false)
+    val portConflict: StateFlow<Boolean> = _portConflict.asStateFlow()
+
+    /** Consecutive connections that closed without the mod ever saying hello. */
+    private var silentConnections = 0
+
+    /** Whether the mod identified itself on the *current* connection. */
+    private var sawHello = false
+
     private val _mapTile = MutableStateFlow<MapTile?>(null)
     val mapTile: StateFlow<MapTile?> = _mapTile.asStateFlow()
 
@@ -327,9 +359,13 @@ class HudRepository(private val scope: CoroutineScope) {
                     socket.connect(InetSocketAddress(HOST, PORT), 1000)
                     socket.soTimeout = 5000
 
+                    sawHello = false
                     writer = PrintWriter(socket.getOutputStream(), true)
                     _isConnected.value = true
-                    Log.i(TAG, "Connected to mod on $HOST:$PORT")
+                    // Not "connected to the mod" -- at this point all we know
+                    // is that something accepted. The hello line is what says
+                    // which; see [portConflict].
+                    Log.i(TAG, "Socket open to $HOST:$PORT")
 
                     val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
                     var line: String?
@@ -348,6 +384,22 @@ class HudRepository(private val scope: CoroutineScope) {
             }
 
             writer = null
+
+            // A connection that came and went without the mod ever identifying
+            // itself is the signature of something *else* holding this port.
+            // Counted rather than acted on immediately, because a genuine mod
+            // restart can also drop one mid-handshake.
+            if (!sawHello) {
+                silentConnections++
+                if (silentConnections >= SILENT_CONNECTIONS_BEFORE_SUSPECTING_CONFLICT
+                    && !_portConflict.value
+                ) {
+                    Log.w(TAG, "$silentConnections connections closed with no hello -- "
+                        + "something other than the mod is on port $PORT")
+                    _portConflict.value = true
+                }
+            }
+
             _isConnected.value = false
             _hudState.value = null
             // Drop the map too -- a tile from wherever the player was before
@@ -384,6 +436,7 @@ class HudRepository(private val scope: CoroutineScope) {
                 "chat" -> handleChatResponse(json)
                 "container" -> handleContainerResponse(json)
                 "noplayer" -> handleNoPlayer()
+                "hello" -> handleHello(json)
                 else -> handleHudState(json)
             }
         } catch (e: Exception) {
@@ -487,6 +540,18 @@ class HudRepository(private val scope: CoroutineScope) {
 
         val message = ChatMessage(id = nextChatId++, segments = segments)
         _chatMessages.value = (_chatMessages.value + message).takeLast(CHAT_HISTORY_LIMIT)
+    }
+
+    /**
+     * The mod's own greeting, the first line on every connection.
+     *
+     * Its *absence* is the signal that matters — see [portConflict].
+     */
+    private fun handleHello(json: JSONObject) {
+        Log.i(TAG, "Mod said hello: ${json.optString("mod")} protocol ${json.optInt("protocol")}")
+        sawHello = true
+        silentConnections = 0
+        _portConflict.value = false
     }
 
     /**
