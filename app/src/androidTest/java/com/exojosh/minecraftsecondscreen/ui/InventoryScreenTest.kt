@@ -77,6 +77,26 @@ class InventoryScreenTest {
         }
     }
 
+    /**
+     * An ordinary (fast) drag from one slot to another.
+     *
+     * Several moves rather than one so the gesture unambiguously passes touch
+     * slop, and no dwell before the first move — pausing on the source is what
+     * turns this into a spread drag instead.
+     */
+    private fun dragBetweenSlots(source: Int, target: Int) {
+        val from = slotCentreInGrid(source)
+        val to = slotCentreInGrid(target)
+        rule.onNodeWithTag(GRID_TEST_TAG).performTouchInput {
+            down(from)
+            moveTo(from + Offset((to.x - from.x) / 3f, 0f))
+            moveTo(from + Offset((to.x - from.x) * 2f / 3f, 0f))
+            moveTo(to)
+            up()
+        }
+        rule.waitForIdle()
+    }
+
     /** Centre of a slot, in coordinates relative to the grid node. */
     private fun slotCentreInGrid(slotIndex: Int): Offset {
         val grid = rule.onNodeWithTag(GRID_TEST_TAG).fetchSemanticsNode().boundsInRoot
@@ -179,6 +199,89 @@ class InventoryScreenTest {
         rule.waitForIdle()
 
         assertEquals(listOf(Click(7, 36, 0, "QUICK_MOVE")), clicks)
+    }
+
+    /**
+     * The bug the mode buttons were reported for: picking "Half" and then
+     * *dragging* used to move the whole stack, because every drag was a plain
+     * two-step left click regardless of mode.
+     */
+    @Test
+    fun halfModeDragTakesHalfAndPlacesAllOfIt() {
+        val clicks = mutableListOf<Click>()
+        setContent(playerInventory(), clicks)
+
+        rule.onNodeWithText("Half").performClick()
+        dragBetweenSlots(36, 38)
+
+        assertEquals(2, clicks.size)
+        assertEquals("right click takes half", Click(7, 36, 1, "PICKUP"), clicks[0])
+        assertEquals("left click puts all of that half down", Click(7, 38, 0, "PICKUP"), clicks[1])
+    }
+
+    /**
+     * No vanilla click picks up exactly one item, so a single-item drag is
+     * three clicks: lift the stack, right-click one into the target, give the
+     * remainder back to the source.
+     */
+    @Test
+    fun singleModeDragLeavesOneItemAndReturnsTheRest() {
+        val clicks = mutableListOf<Click>()
+        setContent(playerInventory(), clicks)
+
+        rule.onNodeWithText("Single").performClick()
+        dragBetweenSlots(36, 38)
+
+        assertEquals(
+            listOf(
+                Click(7, 36, 0, "PICKUP"),
+                Click(7, 38, 1, "PICKUP"),
+                Click(7, 36, 0, "PICKUP")
+            ),
+            clicks
+        )
+    }
+
+    /**
+     * Hold, then drag: vanilla's spread-drag, sent as one quick-craft over
+     * every slot the finger painted. The clicks only go out on release, which
+     * is also how the game's own `HandledScreen` does it.
+     */
+    @Test
+    fun holdingThenDraggingSpreadsAcrossThePaintedSlots() {
+        val clicks = mutableListOf<Click>()
+        setContent(playerInventory(), clicks)
+
+        // Resolved before the injection block: looking a node up from inside it
+        // would re-enter the test framework mid-gesture.
+        val from = slotCentreInGrid(36)
+        val middle = slotCentreInGrid(37)
+        val to = slotCentreInGrid(38)
+
+        rule.onNodeWithTag(GRID_TEST_TAG).performTouchInput {
+            down(from)
+            // Still for longer than the hold threshold: this is what separates
+            // a spread from an ordinary move.
+            advanceEventTime(500)
+            moveTo(middle)
+            moveTo(to)
+            up()
+        }
+        rule.waitForIdle()
+
+        assertEquals(
+            listOf(
+                // The whole stack has to be on the cursor first, or the server
+                // abandons the drag at its first click.
+                Click(7, 36, 0, "PICKUP"),
+                Click(7, -999, 0, "QUICK_CRAFT"),
+                Click(7, 36, 1, "QUICK_CRAFT"),
+                Click(7, 37, 1, "QUICK_CRAFT"),
+                Click(7, 38, 1, "QUICK_CRAFT"),
+                Click(7, -999, 2, "QUICK_CRAFT")
+            ),
+            clicks
+        )
     }
 
     /** The held stack has to be visible and disposable, or a half-finished move

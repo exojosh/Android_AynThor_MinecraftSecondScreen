@@ -9,11 +9,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -34,12 +32,16 @@ import com.exojosh.minecraftsecondscreen.ui.ChatScreen
 import com.exojosh.minecraftsecondscreen.ui.HudScreen
 import com.exojosh.minecraftsecondscreen.ui.InputGridScreen
 import com.exojosh.minecraftsecondscreen.ui.InventoryScreen
+import com.exojosh.minecraftsecondscreen.ui.LocalMinecraftGui
 import com.exojosh.minecraftsecondscreen.ui.MapScreen
+import com.exojosh.minecraftsecondscreen.ui.MinecraftButton
 import com.exojosh.minecraftsecondscreen.ui.RepeatingTextureBackground
 import com.exojosh.minecraftsecondscreen.ui.SettingsScreen
 import com.exojosh.minecraftsecondscreen.ui.rememberChatDraftState
 import com.exojosh.minecraftsecondscreen.ui.rememberMinecraftFont
+import com.exojosh.minecraftsecondscreen.ui.rememberMinecraftGuiTextures
 import com.exojosh.minecraftsecondscreen.settings.HudElement
+import com.exojosh.minecraftsecondscreen.settings.rememberChatSettings
 import com.exojosh.minecraftsecondscreen.settings.rememberHudSettings
 import com.exojosh.minecraftsecondscreen.settings.rememberInputSettings
 
@@ -51,8 +53,6 @@ import com.exojosh.minecraftsecondscreen.settings.rememberInputSettings
  * can be worth a full step of map size rather than a sliver.
  */
 private val TAB_STRIP_HEIGHT = 44.dp
-
-private val TAB_SELECTED_COLOR = Color(0xFF6750A4)
 
 /** Vanilla's error red, for the one banner this screen ever shows. */
 private val PORT_CONFLICT_COLOR = Color(0xCCB3261E)
@@ -106,6 +106,7 @@ fun SecondScreenApp(
     var selectedTab by remember { mutableStateOf(SecondScreenTab.HUD) }
     val settings = rememberHudSettings()
     val inputSettings = rememberInputSettings()
+    val chatSettings = rememberChatSettings()
 
     // Held here rather than inside ChatScreen because a tab switch disposes the
     // panel's content: a draft owned down there would be lost by glancing at
@@ -137,6 +138,12 @@ fun SecondScreenApp(
     val dirtBitmap = remember(iconProvider.getBackground()) {
         iconProvider.getBackground()?.asImageBitmap()
     }
+
+    // The game's GUI chrome — button states and the inventory slot — provided
+    // once for the whole window rather than threaded through every control that
+    // draws with it. Same source as everything else: the socket, so a resource
+    // pack restyling the GUI restyles these too.
+    val guiTextures = rememberMinecraftGuiTextures(iconProvider, chatFont)
 
     val content: @Composable () -> Unit = {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -193,7 +200,8 @@ fun SecondScreenApp(
                             fontSheet = chatFont,
                             isConnected = isConnected,
                             draft = chatDraft,
-                            onSend = hudRepository::sendChat
+                            onSend = hudRepository::sendChat,
+                            useSystemKeyboard = chatSettings.useSystemKeyboard
                         )
 
                         SecondScreenTab.ITEMS -> InventoryScreen(
@@ -214,6 +222,7 @@ fun SecondScreenApp(
                         SecondScreenTab.SETTINGS -> SettingsScreen(
                             settings = settings,
                             inputSettings = inputSettings,
+                            chatSettings = chatSettings,
                             bindings = bindings,
                             onRequestBindings = hudRepository::requestBindings
                         )
@@ -250,43 +259,47 @@ fun SecondScreenApp(
                     // exactly: the strip is overlaid on the Box, and the panel
                     // above only avoids it via a bottom padding of that height,
                     // so a taller strip silently covers the panel's last rows.
-                    .padding(vertical = 2.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
+                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // Driven off the enum so adding a tab is one entry, not another
                 // copy-pasted Button that can drift from its neighbours.
+                //
+                // The game's own button sprite, and its hover state for the
+                // selected tab -- vanilla has no sticky "selected button", but
+                // the highlighted sprite is exactly the "this is the one you're
+                // on" treatment, and inventing a colour would have been the
+                // only Material-looking thing left on the screen. Equal weights
+                // rather than SpaceEvenly: nine-sliced buttons of five
+                // different widths read as five different controls.
                 SecondScreenTab.entries.forEach { tab ->
-                    Button(
+                    MinecraftButton(
+                        text = tab.label,
                         onClick = { selectedTab = tab },
-                        modifier = Modifier.height(40.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor =
-                                if (selectedTab == tab) TAB_SELECTED_COLOR else Color.Transparent,
-                            contentColor = Color.White
-                        ),
-                        shape = RoundedCornerShape(50)
-                    ) {
-                        Text(tab.label)
-                    }
+                        selected = selectedTab == tab,
+                        modifier = Modifier.weight(1f).height(40.dp)
+                    )
                 }
             }
         }
     }
 
-    if (dirtBitmap != null) {
-        RepeatingTextureBackground(
-            texture = dirtBitmap,
-            scaleFactor = 16f,
-            modifier = Modifier.fillMaxSize(),
-            content = content
-        )
-    } else {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color(0xFF222222)),
-            content = { content() }
-        )
+    CompositionLocalProvider(LocalMinecraftGui provides guiTextures) {
+        if (dirtBitmap != null) {
+            RepeatingTextureBackground(
+                texture = dirtBitmap,
+                scaleFactor = 16f,
+                modifier = Modifier.fillMaxSize(),
+                content = content
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFF222222)),
+                content = { content() }
+            )
+        }
     }
 }
