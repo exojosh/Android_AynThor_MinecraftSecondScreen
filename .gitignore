@@ -15,10 +15,18 @@
 .cxx
 local.properties
 
-# Extracted Minecraft textures (HUD sprites, hotbar, bitmap font, block textures).
-# Not redistributable under Mojang's EULA, so they stay local-only.
-# See CLAUDE.md "Required local assets" for what to drop in and where.
-app/src/main/assets/minecraft/
+# Extracted Minecraft textures (HUD sprites, hotbar, bitmap font, block
+# textures). Not redistributable under Mojang's EULA, so they stay local-only.
+#
+# These are a *legacy fallback* and no longer needed: the mod serves every
+# texture over the socket, resolved through Minecraft's own resource manager.
+# Safe to delete entirely.
+#
+# The wildcard matters. This rule used to name `minecraft/` exactly, the folder
+# was later renamed to `minecraft_ignore/` to work around a Gradle asset-merger
+# problem, and fifteen Mojang PNGs quietly walked into a public repo behind the
+# rename.
+app/src/main/assets/minecraft*/
 
 # The client jar hud_sim.py reads its textures out of. tools/README.md tells you
 # to `adb pull` it to exactly this path, so it lands in the working tree by
