@@ -99,7 +99,18 @@ enum class HudIcon(val assetKey: String, val candidateNames: List<String>) {
     // textures/misc/ -- so the legacy bundled-fallback path can't reach it and
     // the candidate list is empty. Socket or nothing, which is fine: without it
     // [ItemGlint] draws no glint and the item still renders correctly.
-    ENCHANTED_GLINT("enchanted_glint_item", emptyList());
+    ENCHANTED_GLINT("enchanted_glint_item", emptyList()),
+
+    // GUI chrome: the game's own button in its three states, and the generic
+    // 18x18 inventory cell. All under gui/sprites/widget/ and
+    // gui/sprites/container/ rather than hud/, so socket-only like the glint --
+    // and like it, missing them costs appearance and not function
+    // ([MinecraftButton] and the inventory grid both fall back to drawing
+    // vanilla's palette themselves).
+    BUTTON("widget_button", emptyList()),
+    BUTTON_HIGHLIGHTED("widget_button_highlighted", emptyList()),
+    BUTTON_DISABLED("widget_button_disabled", emptyList()),
+    SLOT("container_slot", emptyList());
 
     companion object {
         /** Not under the hud/ sprite dir, so they're socket-or-nothing on the

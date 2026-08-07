@@ -40,6 +40,13 @@ class SecondScreenPresentation(
         // playing the whole time.
         window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
+        // Only matters in the Chat tab's system-keyboard mode, and it's the
+        // half of that setting this app can actually control: the window has to
+        // resize around the IME rather than sit under it, or the draft line is
+        // covered by the keyboard typing into it. Whether an IME shows up on a
+        // presentation display at all is Android's call -- see ChatSettings.
+        window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+
         val composeView = ComposeView(context).apply {
             setViewTreeLifecycleOwner(activity)
             setViewTreeViewModelStoreOwner(activity)

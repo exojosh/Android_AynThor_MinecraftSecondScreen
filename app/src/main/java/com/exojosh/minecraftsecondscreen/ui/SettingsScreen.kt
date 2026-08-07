@@ -7,13 +7,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -27,10 +27,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.exojosh.minecraftsecondscreen.net.GameBinding
+import com.exojosh.minecraftsecondscreen.settings.ChatSettings
 import com.exojosh.minecraftsecondscreen.settings.HudElement
 import com.exojosh.minecraftsecondscreen.settings.HudSettings
 import com.exojosh.minecraftsecondscreen.settings.INPUT_SLOT_COUNT
 import com.exojosh.minecraftsecondscreen.settings.InputSettings
+
+/** Reset/Cancel: a game button, but not a thumb-sized one — these sit in a
+ *  header beside text, not in a row of controls being aimed at. */
+private val SMALL_BUTTON_HEIGHT = 32.dp
 
 private val ROW_BACKGROUND = Color.Black.copy(alpha = 0.35f)
 private val SECONDARY_TEXT = Color(0xFF9A9A9A)
@@ -62,6 +67,7 @@ private val UNBOUND_TEXT = Color(0xFFD08A3A)
 fun SettingsScreen(
     settings: HudSettings,
     inputSettings: InputSettings,
+    chatSettings: ChatSettings,
     bindings: List<GameBinding>,
     onRequestBindings: () -> Unit
 ) {
@@ -113,6 +119,28 @@ fun SettingsScreen(
 
         item {
             SectionHeader(
+                title = "Chat",
+                subtitle = "How the Chat tab is typed on",
+                onReset = null
+            )
+        }
+
+        item {
+            SettingToggle(
+                label = "Use the Android keyboard",
+                // Says what the risk is rather than promising it works: whether
+                // an IME appears on a presentation display at all, and on which
+                // screen, is the device's decision and not the app's.
+                description = "Off: the keyboard this app draws. On: the system " +
+                    "keyboard — nicer to type on where it comes up on this screen, " +
+                    "but on some setups it appears over the game instead.",
+                checked = chatSettings.useSystemKeyboard,
+                onToggle = chatSettings::toggleSystemKeyboard
+            )
+        }
+
+        item {
+            SectionHeader(
                 title = "Input buttons",
                 subtitle = "What each button on the Input tab presses",
                 onReset = if (inputSettings.isDefault) null else inputSettings::resetToDefaults
@@ -149,9 +177,11 @@ private fun SectionHeader(title: String, subtitle: String, onReset: (() -> Unit)
             Text(text = subtitle, color = SECONDARY_TEXT, fontSize = 11.sp)
         }
         if (onReset != null) {
-            TextButton(onClick = onReset) {
-                Text("Reset", color = Color(0xFFBBBBBB))
-            }
+            MinecraftButton(
+                text = "Reset",
+                onClick = onReset,
+                modifier = Modifier.height(SMALL_BUTTON_HEIGHT)
+            )
         }
     }
 }
@@ -166,6 +196,19 @@ private fun ElementToggle(
     element: HudElement,
     checked: Boolean,
     onToggle: () -> Unit
+) = SettingToggle(
+    label = element.label,
+    description = element.description,
+    checked = checked,
+    onToggle = onToggle
+)
+
+@Composable
+private fun SettingToggle(
+    label: String,
+    description: String,
+    checked: Boolean,
+    onToggle: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -177,8 +220,8 @@ private fun ElementToggle(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(text = element.label, color = Color.White, fontSize = 14.sp)
-            Text(text = element.description, color = SECONDARY_TEXT, fontSize = 11.sp)
+            Text(text = label, color = Color.White, fontSize = 14.sp)
+            Text(text = description, color = SECONDARY_TEXT, fontSize = 11.sp)
         }
         Switch(
             checked = checked,
@@ -270,9 +313,11 @@ private fun BindingPicker(
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold
                 )
-                TextButton(onClick = onCancel) {
-                    Text("Cancel", color = Color(0xFFBBBBBB))
-                }
+                MinecraftButton(
+                    text = "Cancel",
+                    onClick = onCancel,
+                    modifier = Modifier.height(SMALL_BUTTON_HEIGHT)
+                )
             }
         }
 

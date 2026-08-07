@@ -1,27 +1,18 @@
 package com.exojosh.minecraftsecondscreen.ui
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.exojosh.minecraftsecondscreen.net.GameBinding
 import com.exojosh.minecraftsecondscreen.settings.INPUT_COLUMNS
 import com.exojosh.minecraftsecondscreen.settings.INPUT_SLOT_COUNT
@@ -29,9 +20,6 @@ import com.exojosh.minecraftsecondscreen.settings.InputSettings
 
 private val GRID_SPACING = 12.dp
 private val GRID_PADDING = 16.dp
-
-private val EMPTY_SLOT_BORDER = Color(0xFF444444)
-private val EMPTY_SLOT_TEXT = Color(0xFF777777)
 
 /**
  * Prettifies a binding id the mod hasn't told us about yet.
@@ -88,38 +76,26 @@ fun InputGridScreen(
                 val bindingId = settings.bindingAt(index)
 
                 if (bindingId == null) {
-                    EmptySlot(modifier = Modifier.height(buttonHeight))
+                    // The game's own disabled-button sprite, which says
+                    // "configurable, not broken" far better than the bordered
+                    // box this used to draw. Not clickable: an empty slot is
+                    // assigned from the Settings tab.
+                    MinecraftButton(
+                        text = "Empty",
+                        onClick = {},
+                        enabled = false,
+                        modifier = Modifier.fillMaxWidth().height(buttonHeight)
+                    )
                 } else {
                     val binding = byId[bindingId]
-                    Button(
+                    MinecraftButton(
+                        text = binding?.label ?: fallbackLabel(bindingId),
                         onClick = { onPressBinding(bindingId) },
-                        modifier = Modifier.height(buttonHeight)
-                    ) {
-                        Text(
-                            text = binding?.label ?: fallbackLabel(bindingId),
-                            textAlign = TextAlign.Center
-                        )
-                    }
+                        modifier = Modifier.fillMaxWidth().height(buttonHeight)
+                    )
                 }
             }
         }
     }
 }
 
-/**
- * A slot with nothing assigned. Drawn rather than skipped so the other buttons
- * keep their positions, and labelled so it reads as configurable rather than
- * as something that failed to load.
- */
-@Composable
-private fun EmptySlot(modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.2f), RoundedCornerShape(20.dp))
-            .border(1.dp, EMPTY_SLOT_BORDER, RoundedCornerShape(20.dp)),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(text = "Empty", color = EMPTY_SLOT_TEXT, fontSize = 12.sp)
-    }
-}

@@ -1,8 +1,6 @@
 package com.exojosh.minecraftsecondscreen.ui
 
 import android.graphics.Bitmap
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
@@ -18,19 +16,18 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -40,49 +37,45 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.exojosh.minecraftsecondscreen.net.ContainerState
 import com.exojosh.minecraftsecondscreen.net.HotbarSlot
+import kotlin.math.floor
 
 /** Gap between the groups of rows (container / equipment / main / hotbar),
  *  which is what makes them read as separate blocks rather than one wall. */
 private val GROUP_GAP = 6.dp
 private val CELL_GAP = 2.dp
-private val SCREEN_PADDING = 6.dp
-private val CONTROL_BAR_HEIGHT = 44.dp
+private val SCREEN_PADDING = 4.dp
 
-private val SLOT_BACKGROUND = Color(0x66000000)
-private val SLOT_BORDER = Color(0xFF5A5A5A)
+/** Clearance between the panel's bevel and the controls inside it. */
+private val PANEL_INSET = 6.dp
+private val CONTROL_BAR_HEIGHT = 40.dp
+
 private val SLOT_BLOCKED = Color(0x55FF4444)
-private val HOTBAR_BORDER = Color(0xFF9A9A9A)
-private val DRAG_SOURCE_TINT = Color(0x33FFFFFF)
-private val MODE_ACTIVE = Color(0xFF6750A4)
-private val MODE_IDLE = Color(0xFF3A3A44)
+private val DRAG_SOURCE_TINT = Color(0x40FFFFFF)
+
+/** Vanilla's own slot highlight (white at half alpha), reused to show which
+ *  slots a distribute drag has painted so far. */
+private val DISTRIBUTE_TINT = Color(0x80FFFFFF)
+
+/** Vanilla draws its GUI labels in this grey on the panel; white would glare. */
+private val PANEL_LABEL = Color(0xFF404040)
+
+/**
+ * How long a finger has to sit still before a drag becomes a *distribute* drag
+ * rather than a move.
+ *
+ * Longer than Compose's own long-press timeout (500ms) would make the gesture
+ * feel broken on a handheld; much shorter and an ordinary slow drag turns into
+ * a spread. This is the one hidden gesture on this screen, and it can afford to
+ * be: unlike a mis-fired half-click it doesn't do the *wrong* move, it does a
+ * move the player can see building up slot by slot before they lift.
+ */
+private const val DISTRIBUTE_HOLD_MS = 300L
 
 /** Test hooks. Drag-to-move can only be checked by actually dragging, and the
  *  gesture handler is on the grid rather than on any cell. */
 const val GRID_TEST_TAG = "inventory-grid"
 
 fun slotTestTag(slotIndex: Int) = "inventory-slot-$slotIndex"
-
-/**
- * How a tap is sent to the server. Drag is always a plain two-step `PICKUP`
- * regardless — dragging a stack somewhere means "move this there", and nothing
- * else.
- *
- * These are modes rather than gestures on purpose. Long-press and two-finger
- * taps are the obvious mappings for half-stack and shift-click, but they have
- * to be raced against the drag detector, and losing that race silently does the
- * *wrong move* to a real inventory. A visible mode you can see the state of
- * beats a hidden gesture you have to trust.
- */
-private enum class TapMode(val label: String) {
-    /** Vanilla's plain left click: take all, place all, or swap. */
-    TAKE_ALL("Whole"),
-
-    /** Vanilla's right click: take half, or place one. `PICKUP` with button 1. */
-    TAKE_HALF("Half"),
-
-    /** Vanilla's shift-click: send the stack to the other half of the screen. */
-    QUICK_MOVE("Move")
-}
 
 /**
  * The Items tab: the open screen handler, with tap and drag to move items.
@@ -118,37 +111,46 @@ fun InventoryScreen(
         return
     }
 
-    var tapMode by remember { mutableStateOf(TapMode.TAKE_ALL) }
+    var moveMode by remember { mutableStateOf(MoveMode.STACK) }
     val grid = remember(state.syncId, state.slots.size, state.playerStart, state.armorStart) {
         InventoryLayout.compute(state)
     }
 
-    Column(modifier = modifier.fillMaxSize().padding(SCREEN_PADDING)) {
-        ControlBar(
-            state = state,
-            tapMode = tapMode,
-            fontSheet = fontSheet,
-            glintTexture = glintTexture,
-            itemIcon = itemIcon,
-            onModeChange = { tapMode = it },
-            onDropCursor = {
-                // -999 is vanilla's "clicked outside the window", which throws
-                // the held stack on the floor. The only way to put down
-                // something that has nowhere to go.
-                onSlotClick(state.syncId, -999, 0, "PICKUP")
-            }
-        )
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(SCREEN_PADDING)
+            // The whole tab sits on the game's own container panel, so the grid
+            // reads as an inventory screen rather than as cells floating on the
+            // dirt backdrop the rest of the app tiles.
+            .vanillaPanel()
+            .padding(PANEL_INSET)
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            ControlBar(
+                state = state,
+                moveMode = moveMode,
+                fontSheet = fontSheet,
+                glintTexture = glintTexture,
+                itemIcon = itemIcon,
+                onModeChange = { moveMode = it },
+                onDropCursor = {
+                    val drop = InventoryMoves.dropCursor()
+                    onSlotClick(state.syncId, drop.slotId, drop.button, drop.action)
+                }
+            )
 
-        SlotGrid(
-            state = state,
-            grid = grid,
-            tapMode = tapMode,
-            fontSheet = fontSheet,
-            glintTexture = glintTexture,
-            itemIcon = itemIcon,
-            onSlotClick = onSlotClick,
-            modifier = Modifier.fillMaxWidth().weight(1f)
-        )
+            SlotGrid(
+                state = state,
+                grid = grid,
+                moveMode = moveMode,
+                fontSheet = fontSheet,
+                glintTexture = glintTexture,
+                itemIcon = itemIcon,
+                onSlotClick = onSlotClick,
+                modifier = Modifier.fillMaxWidth().weight(1f)
+            )
+        }
     }
 }
 
@@ -162,63 +164,67 @@ fun InventoryScreen(
 @Composable
 private fun ControlBar(
     state: ContainerState,
-    tapMode: TapMode,
+    moveMode: MoveMode,
     fontSheet: MinecraftFontSheet?,
     glintTexture: Bitmap?,
     itemIcon: (String) -> Bitmap?,
-    onModeChange: (TapMode) -> Unit,
+    onModeChange: (MoveMode) -> Unit,
     onDropCursor: () -> Unit
 ) {
+    val gui = LocalMinecraftGui.current
+
     Row(
         modifier = Modifier.fillMaxWidth().height(CONTROL_BAR_HEIGHT),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        TapMode.entries.forEach { mode ->
-            Button(
+        MoveMode.entries.forEach { mode ->
+            MinecraftButton(
+                text = mode.label,
                 onClick = { onModeChange(mode) },
-                modifier = Modifier.height(36.dp),
-                shape = RoundedCornerShape(6.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (mode == tapMode) MODE_ACTIVE else MODE_IDLE,
-                    contentColor = Color.White
+                selected = mode == moveMode,
+                modifier = Modifier.height(CONTROL_BAR_HEIGHT - 4.dp)
+            )
+        }
+
+        Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+            // Two things share this space because they're never both wanted:
+            // the distribute drag is the one hidden gesture on this screen and
+            // a line of grey text is what stops it being a secret, but once
+            // something is on the cursor, saying so matters more.
+            val label = if (state.hasCursorStack) "Holding" else "hold, then drag to spread"
+            if (fontSheet != null) {
+                MinecraftText(
+                    text = label,
+                    fontSheet = fontSheet,
+                    pixelSize = 1.5.dp,
+                    color = PANEL_LABEL,
+                    style = MinecraftTextStyle.PLAIN
                 )
-            ) {
-                Text(text = mode.label, fontSize = 12.sp, maxLines = 1)
+            } else {
+                Text(text = label, color = PANEL_LABEL, fontSize = 10.sp)
             }
         }
 
-        Box(modifier = Modifier.weight(1f))
-
         if (state.hasCursorStack) {
-            Text(text = "Holding", color = Color(0xFFBBBBBB), fontSize = 11.sp)
             Box(
                 modifier = Modifier
-                    .size(36.dp)
-                    .background(SLOT_BACKGROUND, RoundedCornerShape(3.dp))
-                    .border(1.dp, HOTBAR_BORDER, RoundedCornerShape(3.dp))
+                    .size(CONTROL_BAR_HEIGHT - 4.dp)
+                    .vanillaSlot(gui.slot)
             ) {
                 SlotContents(
                     stack = state.cursor,
                     fontSheet = fontSheet,
                     glintTexture = glintTexture,
                     itemIcon = itemIcon,
-                    cellSize = 36.dp
+                    cellSize = CONTROL_BAR_HEIGHT - 4.dp
                 )
             }
-            Button(
+            MinecraftButton(
+                text = "Drop",
                 onClick = onDropCursor,
-                modifier = Modifier.height(36.dp),
-                shape = RoundedCornerShape(6.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MODE_IDLE,
-                    contentColor = Color.White
-                )
-            ) {
-                Text(text = "Drop", fontSize = 12.sp, maxLines = 1)
-            }
+                modifier = Modifier.height(CONTROL_BAR_HEIGHT - 4.dp)
+            )
         }
     }
 }
@@ -236,7 +242,7 @@ private fun ControlBar(
 private fun SlotGrid(
     state: ContainerState,
     grid: InventoryGrid,
-    tapMode: TapMode,
+    moveMode: MoveMode,
     fontSheet: MinecraftFontSheet?,
     glintTexture: Bitmap?,
     itemIcon: (String) -> Bitmap?,
@@ -245,6 +251,7 @@ private fun SlotGrid(
 ) {
     BoxWithConstraints(modifier = modifier) {
         val density = LocalDensity.current
+        val gui = LocalMinecraftGui.current
 
         // Cells are square and sized to whichever axis runs out first, so the
         // whole grid is always on screen without scrolling -- an inventory you
@@ -254,7 +261,15 @@ private fun SlotGrid(
         val cellFromHeight = availableHeight / grid.rowCount
         val cellFromWidth =
             (maxWidth - CELL_GAP * (InventoryLayout.COLUMNS - 1)) / InventoryLayout.COLUMNS
-        val cell = minOf(cellFromHeight, cellFromWidth).coerceAtLeast(20.dp)
+        val cellFit = minOf(cellFromHeight, cellFromWidth).coerceAtLeast(20.dp)
+
+        // Rounded down to a whole number of texture pixels: the slot sprite is
+        // 18x18 with a 1px bevel, and at a fractional scale that bevel comes out
+        // one pixel wide on some cells and two on others.
+        val cell = with(density) {
+            val pixels = floor(cellFit.toPx() / SLOT_PIXELS).coerceAtLeast(1f)
+            (pixels * SLOT_PIXELS).toDp()
+        }
 
         val cellPx = with(density) { cell.toPx() }
         val cellGapPx = with(density) { CELL_GAP.toPx() }
@@ -283,6 +298,16 @@ private fun SlotGrid(
 
         var dragFrom by remember { mutableStateOf<Int?>(null) }
         var dragPosition by remember { mutableStateOf(Offset.Zero) }
+        var painted by remember { mutableStateOf(emptySet<Int>()) }
+
+        // The gesture handler outlives the composition that started it, so
+        // reading `state` or `moveMode` straight out of the closure would use
+        // whatever they were when the pointer input last restarted. The keys
+        // below deliberately don't include either -- restarting the handler
+        // mid-drag would cancel the drag -- so they're read through these.
+        val currentState by rememberUpdatedState(state)
+        val currentMode by rememberUpdatedState(moveMode)
+        val send by rememberUpdatedState(onSlotClick)
 
         Box(
             modifier = Modifier
@@ -297,31 +322,77 @@ private fun SlotGrid(
 
                         dragPosition = down.position
 
-                        // Slop first: below it this is a tap, above it a drag.
-                        // Racing a long-press timer in here as well is what
-                        // makes touch inventories send the wrong move, so the
-                        // other actions are modes instead (see TapMode).
-                        val slopChange = awaitTouchSlopOrCancellation(down.id) { change, _ ->
-                            change.consume()
+                        // Three outcomes race here, and only two of them are
+                        // ambiguous: the finger moves (a drag), lifts (a tap),
+                        // or does neither for long enough to mean "spread this
+                        // stack". withTimeoutOrNull can't distinguish its own
+                        // timeout from the lambda returning null, hence the
+                        // flag -- a lift and a hold both come back null.
+                        //
+                        // This is AwaitPointerEventScope's *own* withTimeoutOrNull,
+                        // not kotlinx.coroutines': it's driven by the pointer
+                        // input frame clock, which is what makes the hold
+                        // measurable from a test's virtual clock. Importing the
+                        // coroutines one would compile and quietly break the
+                        // instrumented test.
+                        var lifted = false
+                        val slopChange = withTimeoutOrNull(DISTRIBUTE_HOLD_MS) {
+                            val change = awaitTouchSlopOrCancellation(down.id) { c, _ ->
+                                c.consume()
+                            }
+                            if (change == null) lifted = true
+                            change
                         }
 
-                        if (slopChange == null) {
-                            // Pointer went up (or was cancelled) without moving.
-                            onSlotClick(
-                                state.syncId,
-                                start,
-                                if (tapMode == TapMode.TAKE_HALF) 1 else 0,
-                                if (tapMode == TapMode.QUICK_MOVE) "QUICK_MOVE" else "PICKUP"
+                        val syncId = currentState.syncId
+                        fun sendAll(clicks: List<SlotClick>) = clicks.forEach {
+                            send(syncId, it.slotId, it.button, it.action)
+                        }
+
+                        if (slopChange == null && lifted) {
+                            sendAll(
+                                InventoryMoves.tap(
+                                    mode = currentMode,
+                                    holdingCursor = currentState.hasCursorStack,
+                                    slot = start
+                                )
                             )
                             return@awaitEachGesture
                         }
 
-                        // A drag picks the source up immediately, so the item
-                        // visibly leaves its slot and follows the finger -- the
-                        // game's own state does the moving, we just asked for
-                        // the first half of it early.
-                        if (!state.hasCursorStack) {
-                            onSlotClick(state.syncId, start, 0, "PICKUP")
+                        if (slopChange == null) {
+                            // Held still: a distribute drag. The whole stack
+                            // comes up first, because that's what gets divided,
+                            // and the slots the finger paints are collected and
+                            // sent as one quick-craft on release -- the same
+                            // order vanilla's own HandledScreen uses.
+                            if (!currentState.hasCursorStack) {
+                                sendAll(listOf(InventoryMoves.pickUp(MoveMode.STACK, start)))
+                            }
+                            dragFrom = start
+                            painted = setOf(start)
+
+                            drag(down.id) { change ->
+                                dragPosition = change.position
+                                slotAt(change.position)?.let { painted = painted + it }
+                                change.consume()
+                            }
+
+                            sendAll(InventoryMoves.distribute(currentMode, painted))
+
+                            dragFrom = null
+                            painted = emptySet()
+                            return@awaitEachGesture
+                        }
+
+                        // An ordinary drag. The source is picked up immediately
+                        // so the item visibly leaves its slot and follows the
+                        // finger -- the game's own state does the moving, we
+                        // just asked for the first half of it early. How *much*
+                        // comes up is the mode's business.
+                        val lifting = !currentState.hasCursorStack
+                        if (lifting) {
+                            sendAll(listOf(InventoryMoves.pickUp(currentMode, start)))
                         }
                         dragFrom = start
                         dragPosition = slopChange.position
@@ -332,13 +403,21 @@ private fun SlotGrid(
                         }
 
                         val target = slotAt(dragPosition)
-                        if (target != null && target != start) {
-                            onSlotClick(state.syncId, target, 0, "PICKUP")
-                        } else if (target == null) {
-                            // Released off the grid: put it back where it came
-                            // from rather than dropping it on the floor, which
-                            // is not what a slipped finger meant.
-                            onSlotClick(state.syncId, start, 0, "PICKUP")
+                        when {
+                            target != null && target != start -> sendAll(
+                                InventoryMoves.drop(
+                                    mode = currentMode,
+                                    source = start,
+                                    target = target,
+                                    targetIsEmpty = currentState.isEmptyAt(target),
+                                    targetHasSameItem = currentState.itemsMatch(start, target)
+                                )
+                            )
+
+                            // Released on the source, or off the grid entirely:
+                            // put it back rather than dropping it on the floor,
+                            // which is not what a slipped finger meant.
+                            lifting -> sendAll(InventoryMoves.returnToSource(start))
                         }
                         dragFrom = null
                     }
@@ -364,8 +443,12 @@ private fun SlotGrid(
                         SlotCell(
                             stack = slot.stack,
                             mayPlace = slot.mayPlace,
-                            isHotbar = row.kind == InventoryRowKind.HOTBAR,
-                            isDragSource = dragFrom == slotIndex,
+                            slotTexture = gui.slot,
+                            highlight = when {
+                                slotIndex in painted -> DISTRIBUTE_TINT
+                                dragFrom == slotIndex -> DRAG_SOURCE_TINT
+                                else -> null
+                            },
                             fontSheet = fontSheet,
                             glintTexture = glintTexture,
                             itemIcon = itemIcon,
@@ -400,6 +483,22 @@ private fun SlotGrid(
     }
 }
 
+/** Whether the slot at [index] is empty — an out-of-range index reads as empty
+ *  rather than throwing, since it can only come from a stale grid. */
+private fun ContainerState.isEmptyAt(index: Int): Boolean {
+    val stack = slots.getOrNull(index)?.stack ?: return true
+    return stack.itemId == InventoryMoves.AIR_ITEM_ID || stack.count <= 0
+}
+
+/** Whether two slots hold the same item — the question [InventoryMoves.drop]
+ *  asks to decide whether a single item can be placed or the drag has to fall
+ *  back to a swap. */
+private fun ContainerState.itemsMatch(a: Int, b: Int): Boolean {
+    val first = slots.getOrNull(a)?.stack ?: return false
+    val second = slots.getOrNull(b)?.stack ?: return false
+    return first.itemId == second.itemId
+}
+
 /** How many group boundaries the grid has, so the height budget accounts for
  *  the same gaps the layout will actually insert. */
 private fun countGroupGaps(grid: InventoryGrid): Int =
@@ -409,31 +508,20 @@ private fun countGroupGaps(grid: InventoryGrid): Int =
 private fun SlotCell(
     stack: HotbarSlot,
     mayPlace: Boolean,
-    isHotbar: Boolean,
-    isDragSource: Boolean,
+    slotTexture: ImageBitmap?,
+    highlight: Color?,
     fontSheet: MinecraftFontSheet?,
     glintTexture: Bitmap?,
     itemIcon: (String) -> Bitmap?,
     cellSize: Dp
 ) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(if (isDragSource) DRAG_SOURCE_TINT else SLOT_BACKGROUND, RoundedCornerShape(3.dp))
-            .border(
-                width = 1.dp,
-                // The hotbar is outlined brighter so the row you're actually
-                // holding is findable at a glance -- it's the one group whose
-                // contents you're about to use rather than store.
-                color = when {
-                    !mayPlace -> SLOT_BLOCKED
-                    isHotbar -> HOTBAR_BORDER
-                    else -> SLOT_BORDER
-                },
-                shape = RoundedCornerShape(3.dp)
-            )
-    ) {
+    Box(modifier = Modifier.fillMaxSize().vanillaSlot(slotTexture)) {
         SlotContents(stack, fontSheet, glintTexture, itemIcon, cellSize)
+
+        // Drawn over the item rather than under it, the way vanilla's own hover
+        // highlight is: a tint behind a full slot would be invisible.
+        if (!mayPlace) SlotOverlay(SLOT_BLOCKED)
+        if (highlight != null) SlotOverlay(highlight)
     }
 }
 
@@ -452,11 +540,11 @@ private fun SlotContents(
     itemIcon: (String) -> Bitmap?,
     cellSize: Dp
 ) {
-    if (stack.itemId == "minecraft:air" || stack.count <= 0) return
+    if (stack.itemId == InventoryMoves.AIR_ITEM_ID || stack.count <= 0) return
 
-    // Inset so the icon sits inside the cell's border the way vanilla's 16x16
-    // item sits inside its 18x18 slot, rather than touching the edges.
-    val inset = cellSize * 0.1f
+    // Inset by the slot's own 1px bevel, so the 16x16 item sits in the 16x16
+    // hole vanilla leaves for it inside an 18x18 cell.
+    val inset = cellSize / SLOT_PIXELS
     val itemBox = cellSize - inset * 2
 
     Box(modifier = Modifier.fillMaxSize().padding(inset)) {

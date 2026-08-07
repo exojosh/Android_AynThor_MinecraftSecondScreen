@@ -1,5 +1,8 @@
 package com.exojosh.minecraftsecondscreen.ui
 
+import android.text.InputType
+import android.view.inputmethod.EditorInfo
+import android.widget.EditText
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -10,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -23,13 +27,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.widget.doAfterTextChanged
 import com.exojosh.minecraftsecondscreen.net.ChatMessage
 import kotlinx.coroutines.delay
 
@@ -92,7 +100,11 @@ fun ChatScreen(
     fontSheet: MinecraftFontSheet?,
     isConnected: Boolean,
     draft: ChatDraftState,
-    onSend: (String) -> Unit
+    onSend: (String) -> Unit,
+    /** Type through Android's IME instead of the app's own keyboard. See
+     *  [com.exojosh.minecraftsecondscreen.settings.ChatSettings] for why this is
+     *  a setting and not simply the way it works. */
+    useSystemKeyboard: Boolean = false
 ) {
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val keyboardHeight = (maxHeight * KEYBOARD_HEIGHT_FRACTION)
@@ -103,7 +115,24 @@ fun ChatScreen(
             .coerceAtMost(maxHeight - DRAFT_BAR_HEIGHT)
             .coerceAtLeast(0.dp)
 
-        Column(modifier = Modifier.fillMaxSize()) {
+        // Held rather than sent-and-cleared while disconnected: sendChat drops
+        // silently in that state, so clearing the draft anyway would delete the
+        // message and show nothing for it.
+        val send: () -> Unit = {
+            if (isConnected && draft.text.isNotBlank()) {
+                onSend(draft.text)
+                draft.text = ""
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                // Only does anything in the system-keyboard mode, and only where
+                // the IME actually reports insets to this window -- but where it
+                // does, it's what keeps the draft line above the keyboard.
+                .imePadding()
+        ) {
             ChatLog(
                 messages = messages,
                 fontSheet = fontSheet,
@@ -111,22 +140,18 @@ fun ChatScreen(
                 modifier = Modifier.fillMaxWidth().weight(1f)
             )
 
-            DraftBar(draft = draft, fontSheet = fontSheet)
+            DraftBar(
+                draft = draft,
+                fontSheet = fontSheet,
+                useSystemKeyboard = useSystemKeyboard,
+                onSend = send
+            )
 
-            if (draft.keyboardOpen) {
+            if (draft.keyboardOpen && !useSystemKeyboard) {
                 ChatKeyboard(
                     onType = { draft.text += it },
                     onBackspace = { draft.text = draft.text.dropLast(1) },
-                    // Held rather than sent-and-cleared while disconnected:
-                    // sendChat drops silently in that state, so clearing the
-                    // draft anyway would delete the message and show nothing
-                    // for it.
-                    onSend = {
-                        if (isConnected && draft.text.isNotBlank()) {
-                            onSend(draft.text)
-                            draft.text = ""
-                        }
-                    },
+                    onSend = send,
                     modifier = Modifier.fillMaxWidth().height(keyboardHeight)
                 )
             }
@@ -265,8 +290,15 @@ private fun PlainTextLog(messages: List<ChatMessage>) {
 @Composable
 private fun DraftBar(
     draft: ChatDraftState,
-    fontSheet: MinecraftFontSheet?
+    fontSheet: MinecraftFontSheet?,
+    useSystemKeyboard: Boolean,
+    onSend: () -> Unit
 ) {
+    if (useSystemKeyboard) {
+        SystemKeyboardDraftBar(draft = draft, onSend = onSend)
+        return
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -321,6 +353,96 @@ private fun DraftBar(
                     maxLines = 1
                 )
             }
+        }
+    }
+}
+
+/**
+ * The draft line as a real text field, driving Android's IME.
+ *
+ * **A platform `EditText` rather than a `BasicTextField`, and that is the whole
+ * point of this composable.** Compose's text field gives no way to set
+ * `IME_FLAG_NO_FULLSCREEN`/`IME_FLAG_NO_EXTRACT_UI`, and without them an IME in
+ * landscape goes into *extract mode*: it replaces the entire display with its
+ * own full-screen editor. On the Thor's bottom screen that means tapping the
+ * draft line wipes the HUD, the log and the tabs off the panel and leaves a
+ * blank white sheet with a caret — verified on device, it is not a theoretical
+ * concern. With those flags the keyboard docks at the bottom and the screen
+ * stays itself.
+ *
+ * `IME_ACTION_SEND` puts Send on the keyboard, which is where a system keyboard
+ * puts it, so the app's own Send button isn't needed in this mode.
+ *
+ * [ChatDraftState.keyboardOpen] follows the field's focus rather than driving
+ * it: the field is what the finger lands on, and the rest of the screen reads
+ * that flag exactly as it does with the drawn keyboard.
+ */
+@Composable
+private fun SystemKeyboardDraftBar(draft: ChatDraftState, onSend: () -> Unit) {
+    // Read here rather than inside the factory: the factory runs once, and the
+    // callbacks it installs would capture the first send it ever saw.
+    val currentSend by rememberUpdatedState(onSend)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(DRAFT_BAR_HEIGHT)
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(4.dp))
+                .padding(horizontal = 6.dp),
+            contentAlignment = Alignment.CenterStart
+        ) {
+            AndroidView(
+                modifier = Modifier.fillMaxWidth(),
+                factory = { context ->
+                    EditText(context).apply {
+                        setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                        setTextColor(android.graphics.Color.WHITE)
+                        setHintTextColor(DRAFT_HINT_COLOR.toArgb())
+                        hint = "Tap to type…"
+                        textSize = 14f
+                        setPadding(0, 0, 0, 0)
+                        isSingleLine = true
+                        inputType = InputType.TYPE_CLASS_TEXT or
+                            InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                        imeOptions = EditorInfo.IME_ACTION_SEND or
+                            EditorInfo.IME_FLAG_NO_FULLSCREEN or
+                            EditorInfo.IME_FLAG_NO_EXTRACT_UI
+
+                        doAfterTextChanged { editable ->
+                            val typed = editable?.toString().orEmpty()
+                            if (typed != draft.text) draft.text = typed
+                        }
+                        setOnEditorActionListener { _, actionId, _ ->
+                            if (actionId == EditorInfo.IME_ACTION_SEND) {
+                                currentSend()
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                        setOnFocusChangeListener { _, hasFocus ->
+                            draft.keyboardOpen = hasFocus
+                        }
+                    }
+                },
+                update = { field ->
+                    // Only when they've genuinely diverged -- a send clearing
+                    // the draft, or a tab switch restoring it. Writing the same
+                    // string back on every recomposition would fight the IME
+                    // for the cursor position mid-word.
+                    if (field.text.toString() != draft.text) {
+                        field.setText(draft.text)
+                        field.setSelection(draft.text.length)
+                    }
+                }
+            )
         }
     }
 }
